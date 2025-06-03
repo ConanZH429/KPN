@@ -1,0 +1,10 @@
+/result/
+/.cometml-runs/
+/.ipynb_checkpoints/
+
+/__pycache__/
+*.pyc
+
+/.vscode/
+
+*.bin
