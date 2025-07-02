@@ -13,9 +13,8 @@ from pathlib import Path
 from random import shuffle
 from torchvision.transforms import v2, InterpolationMode
 from ..cfg import SPEEDConfig
-from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, ZAxisRotation, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare
+from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare
 from .utils import MultiEpochsDataLoader, world2image, points2box
-from ..pose import get_pos_encoder, get_ori_encoder
 from ..utils import SPEEDCamera
 
 

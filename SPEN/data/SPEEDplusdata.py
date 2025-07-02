@@ -13,9 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from torchvision.transforms import v2, InterpolationMode
 from ..cfg import SPEEDplusConfig
-from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, ZAxisRotation, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare
+from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare
 from .utils import MultiEpochsDataLoader, world2image, points2box
-from ..pose import get_pos_encoder, get_ori_encoder
+from ..keypoints import get_keypoints_encoder
 from ..utils import SPEEDplusCamera
 
 
@@ -63,7 +63,9 @@ class SPEEDplusDataset(Dataset):
         self.image_size = config.image_size
         self.resize_first = config.resize_first
         self.image_first_size = config.image_first_size
-        self.Camera = SPEEDplusCamera(config.image_first_size) if self.resize_first else SPEEDplusCamera((1200, 1920))
+        self.keypoints = config.keypoints
+        self.camera = SPEEDplusCamera(config.image_first_size) if self.resize_first else SPEEDplusCamera((1200, 1920))
+        self.input_image_size_ratio = self.image_size[0] / (self.image_first_size[0] if self.resize_first else 1200)
         # load the labels
         self.label = {}
         if mode == "train":
@@ -94,17 +96,18 @@ class SPEEDplusDataset(Dataset):
         # transform the value of label to numpy array
         for k in self.label.keys():
             self.label[k]["pos"] = np.array(self.label[k]["pos"], dtype=np.float32)
-            self.label[k]["ori"] = np.array(self.label[k]["ori"], dtype=np.float32)
+            self.label[k]["ori"] = np.array(self.label[k]["ori"], dtype=np.float32)        
         # caculate the keypoints and bbox of the image
         for k in self.label.keys():
-            points_cam, points_image, r_cam_min_idx, r_cam_max_idx = world2image(self.label[k]["pos"], self.label[k]["ori"], self.Camera)
-            self.label[k]["points_cam"] = points_cam      # 11x4
-            self.label[k]["points_image"] = points_image      # 11x3
+            points_cam, points_image, points_vis, r_cam_min_idx, r_cam_max_idx = world2image(self.keypoints, self.label[k]["pos"], self.label[k]["ori"], self.camera,
+                                                                                 config.image_first_size if self.resize_first else (1200, 1920))
+            self.label[k]["points_cam"] = points_cam      # 11x3
+            self.label[k]["points_image"] = points_image      # 11x2
+            self.label[k]["points_vis"] = points_vis      # 11
             self.label[k]["r_cam_min_idx"] = r_cam_min_idx
             self.label[k]["r_cam_max_idx"] = r_cam_max_idx
-            box, in_image_num = points2box(points_image, self.image_first_size if self.resize_first else (1200, 1920))
+            box = points2box(points_image, points_vis, self.image_first_size if self.resize_first else (1200, 1920))
             self.label[k]["bbox"] = box
-            self.label[k]["in_image_num"] = in_image_num
         # transform the image to tensor
         self.image2tensor = v2.Compose([
             v2.ToImage(),
@@ -113,14 +116,12 @@ class SPEEDplusDataset(Dataset):
         ])
         # encoder
         if self.mode in ("train", "test"):
-            self.pos_encoder_list = [
-                get_pos_encoder(pos_type, **config.pos_args[pos_type])
-                for pos_type in config.pos_loss_dict.keys()
-            ]
-            self.ori_encoder_list = [
-                get_ori_encoder(ori_type, **config.ori_args[ori_type])
-                for ori_type in config.ori_loss_dict.keys()
-            ]
+            self.keypoints_encoder = get_keypoints_encoder(
+                keypoints_type=config.keypoints_type,
+                keypoints_num=config.keypoints.shape[0],
+                input_image_shape=config.image_size,
+                **config.keypoints_args[config.keypoints_type]
+            )
         self.len = int(len(self.image_list))
     
     def __len__(self) -> int:
@@ -164,7 +165,7 @@ class SPEEDplusDataset(Dataset):
             Tuple[np.ndarray, np.ndarray, np.ndarray]: The position, orientation and bounding box.
         """
         label = self.label[image_name]
-        return label["pos"], label["ori"], label["bbox"], label["points_cam"], label["points_image"], label["in_image_num"], label["r_cam_min_idx"], label["r_cam_max_idx"]
+        return label["pos"], label["ori"], label["bbox"], label["points_cam"], label["points_image"], label["points_vis"], label["r_cam_min_idx"], label["r_cam_max_idx"]
 
 
     def divide_data(self, lst: list, n: int):
@@ -175,7 +176,6 @@ class SPEEDplusDataset(Dataset):
     def _cache_image_multithread(self, image_list: List[str]):
         image_divided = self.divide_data(image_list, 10)
         threads = []
-        image_numpy_list = []
         start = 0
         if self.resize_first:
             for (i, sub_image_name) in enumerate(image_divided):
@@ -202,33 +202,20 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
         self.drop_block_safe = DropBlockSafe(p=config.DropBlockSafe_p, **config.DropBlockSafe_args)
         self.sun_flare = SunFlare(p=config.SunFlare_p)
         self.cloth_surface = ClothSurfaceAug(
-            image_shape=self.image_first_size if self.resize_first else (1200, 1920),
             p=config.ClothSurface_p,
         )
         self.surface_brightness = SurfaceBrightnessAug(p=config.SurfaceBrightness_p)
-        self.z_axis_rotation = ZAxisRotation(
-            image_shape=self.image_first_size if self.resize_first else (1200, 1920),
-            p=config.ZAxisRotation_p,
-            Camera=self.Camera,
-            **config.ZAxisRotation_args
-        )
         self.optical_center_rotation = OpticalCenterRotation(
             image_shape=self.image_first_size if self.resize_first else (1200, 1920),
             p=config.OpticalCenterRotation_p,
-            Camera=self.Camera,
+            camera=self.camera,
             **config.OpticalCenterRotation_args
-        )
-        self.trans_rotation = TransRotation(
-            image_shape=self.image_first_size if self.resize_first else (1200, 1920),
-            p=config.TransRotation_p,
-            Camera=self.Camera,
-            **config.TransRotation_args
         )
         self.albumentation_aug = AlbumentationAug(p=config.AlbumentationAug_p)
 
     def __getitem__(self, index):
         image = self._get_image(index, self.image_list[index])
-        pos, ori, box, points_cam, points_image, in_image_num, r_cam_min_idx, r_cam_max_idx = self._get_label(self.image_list[index])
+        pos, ori, box, points_cam, points_image, points_vis, r_cam_min_idx, r_cam_max_idx = self._get_label(self.image_list[index])
         
         # data augmentation
         image = self.crop_and_paste(image, box)
@@ -237,9 +224,7 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
         image = self.cloth_surface(image, points_image, r_cam_min_idx)
         image = self.surface_brightness(image, points_image, r_cam_min_idx)
         image = self.sun_flare(image, box)
-        image, pos, ori, box, points_cam, points_image = self.z_axis_rotation(image, pos, ori, box, points_cam, points_image, in_image_num)
-        image, pos, ori, box, points_cam, points_image = self.optical_center_rotation(image, pos, ori, box, points_cam, points_image, in_image_num)
-        image, pos, ori, box, points_cam, points_image = self.trans_rotation(image, pos, ori, box, points_cam, points_image, in_image_num, r_cam_min_idx, r_cam_max_idx)
+        image, pos, ori, box, points_cam, points_image, points_vis = self.optical_center_rotation(image, pos, ori, box, points_cam, points_image, points_vis)
         image = self.albumentation_aug(image, box)
 
         # transform the image to tensor
@@ -251,18 +236,11 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
             "ori": ori.astype(np.float32),
             "box": box.astype(np.int32),
             "points_cam": points_cam.astype(np.float32),
-            "points_image": points_image.astype(np.float32),
+            "points_image": points_image.astype(np.float32) * self.input_image_size_ratio,
+            "points_vis": points_vis,
         }
-        # encode the position
-        pos_encode = {}
-        for pos_encoder in self.pos_encoder_list:
-            pos_encode.update(pos_encoder.encode(pos))
-        label["pos_encode"] = pos_encode
-        # encode the orientation
-        ori_encode = {}
-        for ori_encoder in self.ori_encoder_list:
-            ori_encode.update(ori_encoder.encode(ori))
-        label["ori_encode"] = ori_encode
+        # encode keypoints
+        label["keypoints_encode"] = self.keypoints_encoder.encode(label["points_image"])
 
         return image_tensor, image, label
 
@@ -313,18 +291,10 @@ class SPEEDplusTestDataset(SPEEDplusDataset):
             "ori": ori.astype(np.float32),
             "box": box.astype(np.int32),
             "points_cam": points_cam.astype(np.float32),
-            "points_image": points_image.astype(np.float32),
+            "points_image": points_image.astype(np.float32) * self.input_image_size_ratio,
         }
         # encode the position
-        pos_encode = {}
-        for pos_encoder in self.pos_encoder_list:
-            pos_encode.update(pos_encoder.encode(pos))
-        label["pos_encode"] = pos_encode
-        # encode the orientation
-        ori_encode = {}
-        for ori_encoder in self.ori_encoder_list:
-            ori_encode.update(ori_encoder.encode(ori))
-        label["ori_encode"] = ori_encode
+        label["keypoints_encode"] = self.keypoints_encoder.encode(label["points_image"])
 
         return image_tensor, image, label
 

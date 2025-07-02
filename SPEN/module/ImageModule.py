@@ -10,33 +10,38 @@ from collections import OrderedDict
 
 from ..TorchModel import Model
 
+from .utils import KeypointsDistanceCalculator, PoseDecoder
 from ..model import SPEN
-from ..cfg import SPEEDConfig
-from ..utils import PosLossFactory, OriLossFactory
-from ..utils import PosLossMetric, OriLossMetric, LossMetric, PosErrorMetric, OriErrorMetric, ScoreMetric
-from ..pose import get_ori_decoder, get_pos_decoder
-from ..pose import PosTransform, OriTransform
+from ..cfg import SPEEDplusConfig
+from ..utils import get_keypoints_loss, get_uncertainty_loss
+from ..utils import LossMetric, PosErrorMetric, OriErrorMetric, ScoreMetric, KeypointsErrorMetric
+from ..keypoints import get_keypoints_decoder
 
 from typing import Dict, Union, List
 
 
 
 class ImageModule(Model):
-    def __init__(self, config: Union[SPEEDConfig]):
+    def __init__(self, config: Union[SPEEDplusConfig]):
         super().__init__()
         # config
         self.config = config
         # model
         self.model = SPEN(self.config)
-        # pose
-        self.pos_decoder = get_pos_decoder(config.pos_type, **config.pos_args[config.pos_type])
-        self.ori_decoder = get_ori_decoder(config.ori_type, **config.ori_args[config.ori_type])
-        # transform
-        self.pos_transform = PosTransform(config.pos_type, **config.pos_args[config.pos_type])
-        self.ori_transform = OriTransform(config.ori_type, **config.ori_args[config.ori_type])
-        if self.config.compile:
-            self.pos_transform = torch.compile(self.pos_transform, mode="reduce-overhead", fullgraph=True)
-            self.ori_transform = torch.compile(self.ori_transform, mode="reduce-overhead", fullgraph=True)
+        # keypoints
+        self.keypoints_decoder = get_keypoints_decoder(
+            config.keypoints_type,
+            input_image_shape=config.image_size,
+            **config.keypoints_args[config.keypoints_type],
+        )
+        self.keypoints_distance_calculator = KeypointsDistanceCalculator(
+            image_size=config.image_size,
+        )
+        self.pose_decoder = PoseDecoder(
+            image_size=config.image_size,
+            points_world=config.keypoints,
+            device=self.config.device,
+        )
 
         self.test_result_dict = {}
 
@@ -52,14 +57,6 @@ class ImageModule(Model):
         father_folder = Path("./SPEN")
         for file in father_folder.rglob("*.py"):
             self.trainer.logger.log_code(file_path=file)
-        # datasetsplit
-        if self.config.dataset == "SPEED":
-            father_folder = Path(".").resolve().parent
-            dataset_folder = father_folder / "datasets" / "speed"
-            self.trainer.logger.log_file(str(dataset_folder / "train.txt"))
-            self.trainer.logger.log_file(str(dataset_folder / "val.txt"))
-            self.trainer.logger.log_file(str(dataset_folder / "train_label.json"))
-            self.trainer.logger.log_file(str(dataset_folder / "val_label.json"))
 
 
     def forward(self, x):
@@ -69,28 +66,15 @@ class ImageModule(Model):
     def train_step(self, index, batch):
         images, _, labels = batch
         num_samples = images.size(0)
-        pos_pre_dict, ori_pre_dict = self.forward(images)
-        # transform
-        pos_pre_dict = self.pos_transform.transform(pos_pre_dict)
-        ori_pre_dict = self.ori_transform.transform(ori_pre_dict)
+        uncertainty_pre, keypoints_encode_pre = self.forward(images)     # B, N  B, N, H, W
         # loss
-        pos_loss_list = [
-            loss(pos_pre_dict, labels["pos_encode"], now_epoch=self.trainer.now_epoch) for loss in self.pos_loss_list
-        ]
-        ori_loss_list = [
-            loss(ori_pre_dict, labels["ori_encode"], now_epoch=self.trainer.now_epoch) for loss in self.ori_loss_list
-        ]
-        pos_loss = torch.tensor(0.0, requires_grad=True).to(images.device)
-        for loss_dict in pos_loss_list:
-            for k in loss_dict.keys():
-                pos_loss += loss_dict[k]
-        ori_loss = torch.tensor(0.0, requires_grad=True).to(images.device)
-        for loss_dict in ori_loss_list:
-            for k in loss_dict.keys():
-                ori_loss += loss_dict[k]
-        train_loss = pos_loss + ori_loss
+        keypoints_encode_loss = self.keypoints_loss(keypoints_encode_pre, labels["keypoints_encode"], now_epoch=self.trainer.now_epoch)
+        keypoints_decode_pre = self.keypoints_decoder.decode(keypoints_encode_pre)  # B, N, 2
+        uncertainty_label = self.keypoints_distance_calculator(keypoints_decode_pre, labels["points_image"])
+        uncertainty_loss = self.uncertainty_loss(uncertainty_pre, uncertainty_label, now_epoch=self.trainer.now_epoch)
+        train_loss = keypoints_encode_loss + uncertainty_loss
         # metrics
-        self._update_train_metrics(num_samples, pos_loss_list, ori_loss_list, train_loss)
+        self._update_train_metrics(num_samples, keypoints_encode_loss, uncertainty_loss, train_loss)
         self._train_log(log_online=False)
         return train_loss
     
@@ -103,13 +87,18 @@ class ImageModule(Model):
     def val_step(self, index, batch):
         images, _, labels = batch
         num_samples = images.size(0)
-        pos_pre_dict, ori_pre_dict = self.forward(images)
-        # transform
-        pos_pre_dict = self.pos_transform.transform(pos_pre_dict)
-        ori_pre_dict = self.ori_transform.transform(ori_pre_dict)
+        uncertainty_pre, keypoints_encode_pre = self.forward(images)     # B, N  B, N, H, W
+        # decode keypoints
+        keypoints_decode_pre = self.keypoints_decoder.decode(keypoints_encode_pre)  # B, N, 2
+        # decode to position and orientation
+        pos_pre, ori_pre = self.pose_decoder.decode2pose(
+            keypoints_decode_pre=keypoints_decode_pre,
+            uncertainty_pre=uncertainty_pre
+        )
         self._update_val_metrics(num_samples,
-                                 pos_pre_dict["cart"], labels["pos"],
-                                 ori_pre_dict["quat"], labels["ori"])
+                                 keypoints_decode_pre, labels["points_image"],
+                                 pos_pre, labels["pos"],
+                                 ori_pre, labels["ori"])
         self._val_log(log_online=False)
     
 
@@ -125,31 +114,31 @@ class ImageModule(Model):
     def test_step(self, index, batch):
         images, _, labels = batch
         num_samples = images.size(0)
-        pos_pre_dict, ori_pre_dict = self.forward(images)
-        # transform
-        pos_pre_dict = self.pos_transform.transform(pos_pre_dict)
-        ori_pre_dict = self.ori_transform.transform(ori_pre_dict)
+        uncertainty_pre, keypoints_encode_pre = self.forward(images)     # B, N  B, N, H, W
+        # decode keypoints
+        keypoints_decode_pre = self.keypoints_decoder.decode(keypoints_encode_pre)  # B, N, 2
+        uncertainty_label = self.keypoints_distance_calculator(keypoints_decode_pre, labels["points_image"])
+        # decode to position and orientation
+        pos_pre, ori_pre = self.pose_decoder.decode2pose(
+            keypoints_decode_pre=keypoints_decode_pre,
+            uncertainty_pre=uncertainty_pre
+        )
         self.test_result_dict[labels["image_name"][0]] = {
             "pos_label": labels["pos"][0].cpu().numpy(),
             "ori_label": labels["ori"][0].cpu().numpy(),
-            "pos_encode_label": {
-                k: v[0].cpu().numpy() for k, v in labels["pos_encode"].items()
-            },
-            "ori_encode_label": {
-                k: v[0].cpu().numpy() for k, v in labels["ori_encode"].items()
-            },
-            "pos_encode_pred": {
-                k: v[0].cpu().numpy() for k, v in pos_pre_dict.items()
-            },
-            "ori_encode_pred": {
-                k: v[0].cpu().numpy() for k, v in ori_pre_dict.items()
-            },
-            "pos_pred": pos_pre_dict["cart"][0].cpu().numpy(),
-            "ori_pred": ori_pre_dict["quat"][0].cpu().numpy(),
+            "keypoints_encode_label": labels["keypoints_encode"][0].cpu().numpy(),
+            "keypoints_encode_pred": keypoints_encode_pre[0].cpu().numpy(),
+            "keypoints_decode_label": labels["points_image"][0].cpu().numpy(),
+            "keypoints_decode_pred": keypoints_decode_pre[0].cpu().numpy(),
+            "uncertainty_label": uncertainty_label[0].cpu().numpy(),
+            "uncertainty_pred": uncertainty_pre[0].cpu().numpy(),
+            "pos_pred": pos_pre[0].cpu().numpy(),
+            "ori_pred": ori_pre[0].cpu().numpy(),
         }
         self._update_test_metrics(num_samples,
-                                  pos_pre_dict["cart"], labels["pos"],
-                                  ori_pre_dict["quat"], labels["ori"])
+                                  keypoints_decode_pre, labels["points_image"],
+                                  pos_pre, labels["pos"],
+                                  ori_pre, labels["ori"])
         self._test_log(log_online=True)
     
 
@@ -164,43 +153,30 @@ class ImageModule(Model):
 
     def _loss_init(self):
         # loss
-        ## pos_loss
-        pos_loss_factory = PosLossFactory()
-        self.pos_loss_list = nn.ModuleList()
-        for pos_type, loss_type in self.config.pos_loss_dict.items():
-            pos_loss =  pos_loss_factory.create_pos_loss(
-                pos_type=pos_type,
-                loss_type=loss_type,
-                beta=self.config.pos_loss_args[pos_type]["beta"],
-                weight_strategy=self.config.pos_loss_args[pos_type]["weight_strategy"],
-            )
-            if self.config.compile:
-                pos_loss = torch.compile(pos_loss, mode="reduce-overhead", fullgraph=True)
-            self.pos_loss_list.append(pos_loss)
-        ## ori_loss
-        ori_loss_factory = OriLossFactory()
-        self.ori_loss_list = nn.ModuleList()
-        for ori_type, loss_type in self.config.ori_loss_dict.items():
-            ori_loss =  ori_loss_factory.create_ori_loss(
-                ori_type=ori_type,
-                loss_type=loss_type,
-                beta=self.config.ori_loss_args[ori_type]["beta"],
-                weight_strategy=self.config.ori_loss_args[ori_type]["weight_strategy"],
-            )
-            if self.config.compile:
-                ori_loss = torch.compile(ori_loss, mode="reduce-overhead", fullgraph=True)
-            self.ori_loss_list.append(ori_loss)
+        ## keypoints loss
+        self.keypoints_loss = get_keypoints_loss(
+            self.config.keypoints_type,
+            self.config.keypoints_loss_type,
+            self.config.keypoints_beta,
+            self.config.keypoints_weight_strategy,
+            **self.config.keypoints_loss_args[self.config.keypoints_loss_type]
+        )
+        ## uncertainty loss
+        self.uncertainty_loss = get_uncertainty_loss(
+            self.config.uncertainty_type,
+            self.config.uncertainty_loss_type,
+            self.config.uncertainty_beta,
+            self.config.uncertainty_weight_strategy,
+            **self.config.uncertainty_loss_args[self.config.uncertainty_loss_type]
+        )
 
-    
+
     def _metrics_init(self):
-        self.train_pos_loss_metric_list = nn.ModuleList([
-            PosLossMetric(pos_type=pos_type) for pos_type in self.config.pos_loss_dict.keys()
-        ])
-        self.train_ori_loss_metric_list = nn.ModuleList([
-            OriLossMetric(ori_type=ori_type) for ori_type in self.config.ori_loss_dict.keys()
-        ])
+        self.keypoints_loss_metric = LossMetric()
+        self.uncertainty_loss_metric = LossMetric()
         self.train_loss_metric = LossMetric()
 
+        self.keypoints_error_metric = KeypointsErrorMetric()
         self.pos_error_metric = PosErrorMetric()
         self.ori_error_metric = OriErrorMetric()
         self.score_metric = ScoreMetric(self.config.ALPHA)
@@ -208,43 +184,34 @@ class ImageModule(Model):
 
     def _update_train_metrics(self,
                               num_samples: int,
-                              pos_loss_list: List[Dict[str, Tensor]],
-                              ori_loss_list: List[Dict[str, Tensor]],
+                              keypoints_encode_loss: Tensor,
+                              uncertainty_loss: Tensor,
                               loss: Tensor):
-        for i in range(len(self.train_pos_loss_metric_list)):
-            self.train_pos_loss_metric_list[i].update(pos_loss_list[i], num_samples)
-        for i in range(len(self.train_ori_loss_metric_list)):
-            self.train_ori_loss_metric_list[i].update(ori_loss_list[i], num_samples)
+        self.keypoints_loss_metric.update(keypoints_encode_loss, num_samples)
+        self.uncertainty_loss_metric.update(uncertainty_loss, num_samples)
         self.train_loss_metric.update(loss, num_samples)
 
 
     def _train_log(self, log_online):
         data = {}
-        data.update({"loss": self.train_loss_metric.compute()})
+        data.update(
+            {
+                "loss": self.train_loss_metric.compute(),
+                "keypoints_loss": self.keypoints_loss_metric.compute(),
+                "uncertainty_loss": self.uncertainty_loss_metric.compute(),
+            }
+        )
         self.log_dict(data=data,
                       epoch=self.trainer.now_epoch,
                       on_bar=True,
                       prefix="train",
                       log_online=log_online)
-        data = {}
-        # loss
-        for loss in self.train_pos_loss_metric_list:
-            data.update(loss.compute())
-        for loss in self.train_ori_loss_metric_list:
-            data.update(loss.compute())
         if not log_online:
             return
-        # beta
-        for loss in self.pos_loss_list:
-            data.update(
-                {beta_name: loss.beta_dict[beta_name].beta
-                 for beta_name in loss.beta_dict.keys()}
-            )
-        for loss in self.ori_loss_list:
-            data.update(
-                {beta_name: loss.beta_dict[beta_name].beta
-                 for beta_name in loss.beta_dict.keys()}
-            )
+        data = {
+            "keypoints_loss_beta": self.keypoints_loss.beta.beta,
+            "uncertainty_loss_beta": self.uncertainty_loss.beta.beta,
+        }
         self.log_dict(data=data,
                       epoch=self.trainer.now_epoch,
                       on_bar=False,
@@ -253,18 +220,18 @@ class ImageModule(Model):
     
 
     def _train_metrics_reset(self):
-        for loss in self.train_pos_loss_metric_list:
-            loss.reset()
-        for loss in self.train_ori_loss_metric_list:
-            loss.reset()
+        self.keypoints_loss_metric.reset()
+        self.uncertainty_loss_metric.reset()
         self.train_loss_metric.reset()
 
 
     def _update_val_metrics(self, num_samples: int,
-                                  pos_decode: Tensor, pos_label: Tensor,
-                                  ori_decode: Tensor, ori_label: Tensor):
-        self.pos_error_metric.update(pos_decode, pos_label, num_samples)
-        self.ori_error_metric.update(ori_decode, ori_label, num_samples)
+                                  keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor,
+                                  pos_pre: Tensor, pos_label: Tensor,
+                                  ori_pre: Tensor, ori_label: Tensor):
+        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, num_samples)
+        self.pos_error_metric.update(pos_pre, pos_label, num_samples)
+        self.ori_error_metric.update(ori_pre, ori_label, num_samples)
         self.score_metric.update(self.pos_error_metric.compute()[1], self.ori_error_metric.compute())
 
 
@@ -272,6 +239,7 @@ class ImageModule(Model):
         data = {}
         pos_error = self.pos_error_metric.compute()
         data.update({
+            "keypoints_error": self.keypoints_error_metric.compute(),
             "pos_error": pos_error[0],
             "Et": pos_error[1],
             "ori_error": self.ori_error_metric.compute(),
@@ -285,23 +253,27 @@ class ImageModule(Model):
     
 
     def _val_metrics_reset(self):
+        self.keypoints_error_metric.reset()
         self.pos_error_metric.reset()
         self.ori_error_metric.reset()
         self.score_metric.reset()
 
 
     def _update_test_metrics(self, num_samples: int,
-                                   pos_decode: Tensor, pos_label: Tensor,
-                                   ori_decode: Tensor, ori_label: Tensor):
-        self.pos_error.update(pos_decode, pos_label, num_samples)
-        self.ori_error.update(ori_decode, ori_label, num_samples)
-        self.score.update(self.pos_error.compute()[1], self.ori_error.compute())
+                                  keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor,
+                                  pos_pre: Tensor, pos_label: Tensor,
+                                  ori_pre: Tensor, ori_label: Tensor):
+        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, num_samples)
+        self.pos_error_metric.update(pos_pre, pos_label, num_samples)
+        self.ori_error_metric.update(ori_pre, ori_label, num_samples)
+        self.score_metric.update(self.pos_error_metric.compute()[1], self.ori_error_metric.compute())
     
 
     def _test_log(self, log_online):
         data = {}
         pos_error = self.pos_error_metric.compute()
         data.update({
+            "keypoints_error": self.keypoints_error_metric.compute(),
             "pos_error": pos_error[0],
             "Et": pos_error[1],
             "ori_error": self.ori_error_metric.compute(),
@@ -315,6 +287,7 @@ class ImageModule(Model):
     
     
     def _test_metrics_reset(self):
+        self.keypoints_error_metric.reset()
         self.pos_error_metric.reset()
         self.ori_error_metric.reset()
         self.score_metric.reset()

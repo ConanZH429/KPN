@@ -7,37 +7,14 @@ import math
 from scipy.spatial.transform import Rotation as R
 from typing import Union, Tuple, List, Optional
 from pathlib import Path
-from ..utils import SPEEDCamera
+from ..utils import Camera
 from .sunflare import sun_flare
-from .utils import points2box, world2image, cam2image
+from .utils import points2box, world2image, camera2image
 # from albumentations.augmentations.geometric.functional import perspective_bboxes
-
-def warp_box(box, M, width, height):
-    # warp points
-    xy = np.ones((4, 3))
-
-    xy[:, :2] = box[[0, 1, 2, 3, 0, 3, 2, 1]].reshape(
-        4, 2
-    )  # 所有点，矩阵变换，求变换后的点
-    xy = xy @ M.T  # transform
-
-    xy = (xy[:, :2] / xy[:, 2:3]).reshape(8)
-    # create new boxes
-    x = xy[[0, 2, 4, 6]]
-    y = xy[[1, 3, 5, 7]]
-    
-    xy = np.array([x.min(), y.min(), x.max(), y.max()])
-    # clip boxes
-    xy[[0, 2]] = xy[[0, 2]].clip(0, width-1)
-    xy[[1, 3]] = xy[[1, 3]].clip(0, height-1)
-    return xy.astype(np.float32)
 
 
 class SurfaceBrightnessAug():
-    def __init__(
-            self,
-            p: float = 0.5,
-    ):
+    def __init__(self, p: float = 0.5,):
         self.p = p
         self.adjacent_faces_dict = {
             0: np.array([
@@ -91,7 +68,7 @@ class SurfaceBrightnessAug():
     def __call__(
             self,
             image: np.ndarray,
-            points_image: np.ndarray,
+            points_image: np.ndarray,       # Nx2
             r_cam_min_idx: int,
     ):
         if random.random() > self.p:
@@ -104,7 +81,7 @@ class SurfaceBrightnessAug():
             surface_idx = self.adjacent_faces_dict[r_cam_min_idx][i]
             output = self.change_single_surface(
                 image=output,
-                points_image=points_image[:8, :2],
+                points_image=points_image[:8],
                 surface_idx=surface_idx
             )
 
@@ -127,7 +104,7 @@ class SurfaceBrightnessAug():
 
 
 class ClothSurfaceAug():
-    def __init__(self, image_shape: Tuple[int], p: float=0.5):
+    def __init__(self, p: float=0.5):
         self.p = p
         # cache the cloth surface
         cloth_folder = Path(__file__).parent.resolve() / "cloth"
@@ -179,7 +156,7 @@ class ClothSurfaceAug():
     def __call__(
             self,
             image: np.ndarray,
-            points_image: np.ndarray,
+            points_image: np.ndarray,       # Nx2
             r_cam_min_idx: int,
     ):
         if random.random() > self.p:
@@ -188,8 +165,8 @@ class ClothSurfaceAug():
         points_image = points_image.copy().astype(np.int32)
 
         surface_picked = random.randint(0, len(self.adjacent_faces_dict[r_cam_min_idx]) - 1)
-        surface_idx = self.adjacent_faces_dict[r_cam_min_idx][surface_picked]
-        surface_points = points_image[surface_idx, :2]
+        surface_points_idx = self.adjacent_faces_dict[r_cam_min_idx][surface_picked]
+        surface_points = points_image[surface_points_idx]       # 4x2
 
         cloth_picked = random.randint(0, self.cloth_num - 1)
         cloth_image = self.cloth_images[cloth_picked]
@@ -212,33 +189,22 @@ class ClothSurfaceAug():
 class TransRotation():
     def __init__(
             self,
+            keypoints: np.ndarray,
             image_shape: Tuple[int],
             max_angle: float,
             max_trans_xy: float,
             max_trans_z: float,
-            Camera,
+            camera: Camera,
             max_t: int,
             p: float = 1.0
     ):
         self.max_angle = max_angle
         self.max_trans_xy = max_trans_xy
         self.max_trans_z = max_trans_z
-        self.Camera = Camera
+        self.camera = camera
         self.max_t = max_t
         self.p = p
-        self.key_points = np.array(
-            [[-0.37,   -0.385,   0.3215],
-            [-0.37,    0.385,   0.3215],
-            [ 0.37,    0.385,   0.3215],
-            [ 0.37,   -0.385,   0.3215],
-            [-0.37,   -0.264,   0.    ],
-            [-0.37,    0.304,   0.    ],
-            [ 0.37,    0.304,   0.    ],
-            [ 0.37,   -0.264,   0.    ],
-            [-0.5427,  0.4877,  0.2535],
-            [ 0.5427,  0.4877,  0.2591],
-            [ 0.305,  -0.579,   0.2515],]
-        )       # 11x3
+        self.points_world = keypoints
         self.image_shape = image_shape
     
     def __call__(
@@ -254,15 +220,15 @@ class TransRotation():
             r_cam_max_idx: int
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Apply translation and rotation to an image and its corresponding position, orientation and bounding box.
+        Apply translation and rotation to the target spacecraft and generate its corresponding position, orientation and bounding box.
 
         Args:
             image (np.ndarray): The image.
             pos (np.ndarray): The position.
             ori (np.ndarray): The orientation.
             box (np.ndarray): The bounding box.
-            points_cam (np.ndarray): The points in camera coordinates, shape: (11, 4).
-            points_image (np.ndarray): The points in image coordinates, shape: (11, 3).
+            points_cam (np.ndarray): The points in camera coordinates, shape: (N, 3).
+            points_image (np.ndarray): The points in image coordinates, shape: (N, 2).
             in_image_num (int): The number of points in the image.
 
         Returns:
@@ -283,10 +249,10 @@ class TransRotation():
             ]) + 1
             
             pos_warped = pos * delta
-            pos_warped[2] = np.clip(pos_warped[2], 5, 35)
+            pos_warped[2] = np.clip(pos_warped[2], min(pos_warped[2], 5), max(pos_warped[2], 35))
 
-            x_lim = self.Camera.K_image[0, 2] * pos_warped[2] / self.Camera.K_image[0, 0]
-            y_lim = self.Camera.K_image[1, 2] * pos_warped[2] / self.Camera.K_image[1, 1]
+            x_lim = self.camera.K[0, 2] * pos_warped[2] / self.camera.K[0, 0]
+            y_lim = self.camera.K[1, 2] * pos_warped[2] / self.camera.K[1, 1]
             pos_warped[0] = np.clip(pos_warped[0], -x_lim, x_lim)
             pos_warped[1] = np.clip(pos_warped[1], -y_lim, y_lim)
 
@@ -300,17 +266,10 @@ class TransRotation():
             euler = rotation.as_euler("YXZ", degrees=True)
             euler_warped = euler + delta_euler
             rotation_warped = R.from_euler("YXZ", euler_warped, degrees=True)
-            rotation_matrix_warped = rotation_warped.as_matrix()
+            ori_warped = rotation_warped.as_quat(canonical=True, scalar_first=True)
 
-            extrinsic_matrix = np.hstack((rotation_matrix_warped, pos_warped.reshape(3, 1)))    # 3x4
-            extrinsic_matrix = np.vstack((extrinsic_matrix, np.array([0, 0, 0, 1])))
-            points_world = np.hstack((self.key_points, np.ones((self.key_points.shape[0], 1)))).T # 4x11
-            points_cam_warped = extrinsic_matrix @ points_world     # 4x11
-            r_cam = np.linalg.norm(points_cam_warped[:3], axis=0)     # 11
-            r_cam_min_idx_warped = r_cam[:8].argmin()     # 11
-
-            points_image_warped = cam2image(points_cam_warped.T, self.Camera).T       # 3x11
-            box_warped, in_image_num_warped = points2box(points_image_warped.T, (h, w))
+            points_cam_warped, points_image_warped, r_cam_min_idx_warped, r_cam_max_idx_warped = world2image(self.points_world, pos_warped, ori_warped, self.camera)
+            box_warped, in_image_num_warped = points2box(points_image_warped, (h, w))
 
             if in_image_num_warped == in_image_num and r_cam_min_idx_warped == r_cam_min_idx:
                 break
@@ -324,15 +283,15 @@ class TransRotation():
         points_mask[-3:] = False
 
         warp_matrix, mask = cv.findHomography(
-            points_image[points_mask, :2].astype(np.float32),
-            points_image_warped.T[points_mask, :2].astype(np.float32)
+            points_image[points_mask],
+            points_image_warped[points_mask]
         )
         if np.any(mask == 0):
             return image, pos, ori, box, points_cam, points_image
 
         image_warped = cv.warpPerspective(image, warp_matrix, (w, h), flags=cv.INTER_LINEAR)
 
-        return image_warped, pos_warped.astype(np.float32), ori.astype(np.float32), box_warped.astype(np.int32), points_cam_warped.T.astype(np.int32), points_image_warped.T.astype(np.int32)
+        return image_warped, pos_warped.astype(np.float32), ori.astype(np.float32), box_warped.astype(np.int32), points_cam_warped, points_image_warped
 
 
 class OpticalCenterRotation():
@@ -341,13 +300,13 @@ class OpticalCenterRotation():
             self,
             image_shape: Tuple[int],
             max_angle: float,
-            Camera,
+            camera,
             max_t: int = 5,
             p: float = 1.0
     ):
         self.max_angle = max_angle
         self.max_t = max_t
-        self.Camera = Camera
+        self.camera = camera
         self.p = p
         self.image_shape = image_shape
 
@@ -359,7 +318,7 @@ class OpticalCenterRotation():
             box: np.ndarray,
             points_cam: np.ndarray,
             points_image: np.ndarray,
-            in_image_num: int
+            points_vis: int
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Rotate around a line passing through the camera's optical center.
@@ -369,8 +328,8 @@ class OpticalCenterRotation():
             pos (np.ndarray): The position.
             ori (np.ndarray): The orientation.
             box (np.ndarray): The bounding box.
-            points_cam (np.ndarray): The points in camera coordinates, shape: (11, 4).
-            points_image (np.ndarray): The points in image coordinates, shape: (11, 3).
+            points_cam (np.ndarray): The points in camera coordinates, shape: (N, 3).
+            points_image (np.ndarray): The points in image coordinates, shape: (N, 2).
             in_image_num (int): The number of points in the image.
 
         Returns:
@@ -378,7 +337,7 @@ class OpticalCenterRotation():
         """
 
         if random.random() > self.p:
-            return image, pos, ori, box, points_cam, points_image
+            return image, pos, ori, box, points_cam, points_image, points_vis
         
         h, w = self.image_shape
 
@@ -396,111 +355,28 @@ class OpticalCenterRotation():
             rotation = R.from_rotvec(rot_angle * rotvec, degrees=True)
             rotation_matrix = rotation.as_matrix()
 
-            extrinsic_matrix = np.hstack((rotation_matrix, np.zeros((3, 1))))
-            extrinsic_matrix = np.vstack((extrinsic_matrix, np.array([0, 0, 0, 1])))
-            points_cam_warped = extrinsic_matrix @ points_cam.T     # 4x11
+            points_cam_warped = rotation_matrix @ points_cam.T     # 3x11
+            points_cam_warped = points_cam_warped.T
+            points_image_warped, points_vis_warped = camera2image(points_cam_warped, self.camera, (h, w))       # Nx2
+            points_vis_warped = points_vis_warped & points_vis
 
-            points_image_warped = cam2image(points_cam_warped.T, self.Camera).T       # 3x11
-            box_warped, in_image_num_warped = points2box(points_image_warped.T, (h, w))
-
-            if in_image_num_warped >= in_image_num - 1:
+            vis_num = points_vis_warped.sum()
+            if vis_num >= points_vis.sum() - 1 and vis_num >= 5:
                 break
             else:
                 t += 1
                 if t > self.max_t:
-                    return image, pos, ori, box, points_cam, points_image
+                    return image, pos, ori, box, points_cam, points_image, points_vis
                 continue
         
-        warp_matrix = self.Camera.K_image @ rotation_matrix @ self.Camera.K_image_inv
+        warp_matrix = self.camera.K @ rotation_matrix @ self.camera.K_inv
         image_warped = cv.warpPerspective(image, warp_matrix, (w, h), flags=cv.INTER_LINEAR)
 
         pos_warped = rotation_matrix @ pos
         ori_warped = rotation * R.from_quat(ori, scalar_first=True)
         ori_warped = ori_warped.as_quat(canonical=True, scalar_first=True)
-
-        return image_warped, pos_warped.astype(np.float32), ori_warped.astype(np.float32), box_warped.astype(np.int32), points_cam_warped.T.astype(np.int32), points_image_warped.T.astype(np.int32)
-
-
-class ZAxisRotation():
-    """
-    Rotate the image around the z-axis.
-    """
-    def __init__(
-            self,
-            image_shape: Tuple[int],
-            max_angle: float,
-            Camera,
-            max_t: int = 5,
-            p: float = 1.0
-        ):
-        """
-        Initialize the ZAxisRotation class.
-
-        Args:
-            max_angle (float): The maximum rotation angle. Unit: degree.
-            max_t (int): The maximum number of trials.
-            Camera: The camera.
-            p (float): The probability of applying rotation.
-        """
-        self.max_angle = max_angle
-        self.max_t = max_t
-        self.Camera = Camera
-        self.p = p
-        self.image_shape = image_shape
-    
-    def __call__(
-            self,
-            image: np.ndarray,
-            pos: np.ndarray,
-            ori: np.ndarray,
-            box: np.ndarray,
-            points_cam: np.ndarray,
-            points_image: np.ndarray,
-            in_image_num: int
-        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Apply rotation around the z-axis to an image and its corresponding position, orientation, bounding box and key points.
-        Args:
-            image (np.ndarray): The image.
-            pos (np.ndarray): The position. Shape: (3,).
-            ori (np.ndarray): The orientation. Shape: (4,).
-            box (np.ndarray): The bounding box. Shape: (4,).
-            key_points (np.ndarray): The key points. Shape: (11, 3).
-        """
-        if random.random() > self.p:
-            return image, pos, ori, box, points_cam, points_image
-
-        h, w = self.image_shape
-
-        t = 0
-        while True:
-            angle = random.uniform(-self.max_angle, self.max_angle)
-
-            rotation = R.from_euler("YXZ", [0, 0, angle], degrees=True)
-            rotation_matrix = rotation.as_matrix()
-
-            extrinsic_matrix = np.hstack((rotation_matrix, np.zeros((3, 1))))
-            extrinsic_matrix = np.vstack((extrinsic_matrix, np.array([0, 0, 0, 1])))
-            points_cam_warped = extrinsic_matrix @ points_cam.T     # 4x11
-
-            points_image_warped = cam2image(points_cam_warped.T, self.Camera).T       # 3x11
-            box_warped, in_image_num_warped = points2box(points_image_warped.T, (h, w))
-    
-            if in_image_num_warped >= in_image_num - 1:
-                break
-            else:
-                t += 1
-                if t > self.max_t:
-                    return image, pos, ori, box, points_cam, points_image
-
-        warp_matrix = self.Camera.K_image @ rotation_matrix @ self.Camera.K_image_inv
-        image_warped = cv.warpPerspective(image, warp_matrix, (w, h), flags=cv.INTER_LINEAR)
-
-        pos_warped = rotation_matrix @ pos
-        ori_warped = rotation * R.from_quat(ori, scalar_first=True)
-        ori_warped = ori_warped.as_quat(canonical=True, scalar_first=True)
-
-        return image_warped, pos_warped.astype(np.float32), ori_warped.astype(np.float32), box_warped.astype(np.int32), points_cam_warped.astype(np.int32).T, points_image_warped.astype(np.int32).T
+        box_warped = points2box(points_image_warped, points_vis_warped, (h, w))
+        return image_warped, pos_warped.astype(np.float32), ori_warped.astype(np.float32), box_warped.astype(np.int32), points_cam_warped, points_image_warped, points_vis_warped
 
 
 class SunFlare():
@@ -599,17 +475,17 @@ class DropBlockSafe():
         # Get the bounding box
         x_min, y_min, x_max, y_max = box
         # The number of drop blocks
-        drop_num = random.randomint(1, self.drop_num + 1)
+        drop_num = random.randint(1, self.drop_num)
 
-        back_ground = random.randomint(0, 256, (h, w), dtype=np.uint8)
+        back_ground = np.random.randint(0, 256, (h, w), dtype=np.uint8)
         mask = np.zeros((h, w), dtype=np.uint8)
 
         # Drop blocks
         for _ in range(drop_num):
-            drop_x_min = random.randomint(0, w-1)
-            drop_y_min = random.randomint(0, h-1)
-            drop_x_max = random.randomint(drop_x_min, w)
-            drop_y_max = random.randomint(drop_y_min, h)
+            drop_x_min = random.randint(0, w-1)
+            drop_y_min = random.randint(0, h-1)
+            drop_x_max = random.randint(drop_x_min, w)
+            drop_y_max = random.randint(drop_y_min, h)
             mask[drop_y_min:drop_y_max, drop_x_min:drop_x_max] = 1
         
         # Drop the blocks around the bounding box
@@ -648,10 +524,10 @@ class CropAndPadSafe():
         y_max += 10
 
         # Random crop around the bounding box
-        top = random.randomint(0, y_min) if y_min > 0 else 0
-        bottom = random.randomint(y_max, h) if y_max < h else h
-        left = random.randomint(0, x_min) if x_min > 0 else 0
-        right = random.randomint(x_max, w) if x_max < w else w
+        top = random.randint(0, y_min) if y_min > 0 else 0
+        bottom = random.randint(y_max, h) if y_max < h else h
+        left = random.randint(0, x_min) if x_min > 0 else 0
+        right = random.randint(x_max, w) if x_max < w else w
 
         # Crop the image
         cropped_image = image[top:bottom, left:right]
@@ -698,10 +574,16 @@ class CropAndPaste():
         
         h, w = image.shape[:2]
         x_min, y_min, x_max, y_max = box
+        y_expand_pix = int(h * 0.01)
+        x_expand_pix = int(w * 0.01)
+        y_min = max(0, y_min-y_expand_pix)
+        y_max = min(h, y_max+y_expand_pix)
+        x_min = max(0, x_min-x_expand_pix)
+        x_max = min(w, x_max+x_expand_pix)
         target_box = image[y_min:y_max, x_min:x_max]
 
         # Random choose a background image
-        idx = random.randint(0, self.background_num)
+        idx = random.randint(0, self.background_num-1)
         background = self.background_images[idx]
 
         # Random crop the background image
@@ -709,10 +591,10 @@ class CropAndPaste():
         # Maximum width and height is shape of the background image
         min_h, min_w = h // 2, w // 2
         max_h, max_w = self.background_size[idx]
-        crop_h = random.randomint(min_h, max_h + 1)
-        crop_w = random.randomint(min_w, max_w + 1)
-        h_start = random.randomint(0, max_h - crop_h + 1)
-        w_start = random.randomint(0, max_w - crop_w + 1)
+        crop_h = random.randint(min_h, max_h)
+        crop_w = random.randint(min_w, max_w)
+        h_start = random.randint(0, max_h - crop_h)
+        w_start = random.randint(0, max_w - crop_w)
         background = background[h_start:h_start + crop_h, w_start:w_start + crop_w]
 
         # Resize the background crop to the shape of the image

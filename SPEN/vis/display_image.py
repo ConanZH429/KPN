@@ -33,7 +33,7 @@ def draw_axis(image: np.ndarray, pos: np.ndarray, ori: np.ndarray, alpha: float 
         extrinsic_mat = np.hstack((rotation.as_matrix(), pos.reshape(3, 1)))
         points_cam = extrinsic_mat @ points_world
         points_cam = points_cam / points_cam[2]
-        points_image = Camera.K_image @ points_cam
+        points_image = Camera.K @ points_cam
         return points_image[0], points_image[1]
 
 
@@ -96,11 +96,11 @@ def draw_world_points(image: np.ndarray, points: np.ndarray, pos: np.ndarray, or
     # extrinsic_mat = np.hstack((rotation.as_matrix(), pos.reshape(3, 1)))
     # points_cam = extrinsic_mat @ points_world
     # points_cam = points_cam / points_cam[2]
-    # points_image = Camera.K_image @ points_cam
+    # points_image = Camera.K @ points_cam
     # points_image = points_image.T
     points_image = points
     for point_image in points_image:
-        image = cv.circle(image, tuple(point_image[:-1].astype(int)), 7, color, -1)
+        image = cv.circle(image, tuple(point_image.astype(int)), 7, color, -1)
     if show:
         show_image(image)
     return image

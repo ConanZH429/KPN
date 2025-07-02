@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 
 from ..TorchModel import Config
 
@@ -18,23 +19,24 @@ class SPEEDplusConfig(Config):
         self.dataset_folder = Path("../datasets/speedplusv2")
         self.cache = True
         self.resize_first = True
-        self.image_first_size = (900, 1440)
+        # self.image_first_size = (900, 1440)
+        self.image_first_size = (800, 1280)
         self.image_size = (480, 768)
         # self.image_size = (400, 640)
 
         # train
         self.device = "cuda"
         self.epochs = 50
-        self.batch_size = 50
+        self.batch_size = 32
         self.lr0 = 0.001
         self.lr_min = 0.000001
-        self.warmup_epochs = 0
+        self.warmup_epochs = 5
         self.weight_decay = 0.00001
         self.optimizer = "AdamW"
-        self.scheduler = "MultiStepLR"              # WarmupCosin, OnPlateau, ReduceWarmupCosin, MultiStepLR
-        self.num_workers = 30
+        self.scheduler = "WarmupCosin"              # WarmupCosin, OnPlateau, ReduceWarmupCosin, MultiStepLR
+        self.num_workers = 10
         self.compile = True
-        self.gradient_clip_val = None
+        self.gradient_clip_val = 5.0
 
         # model
         # backbone
@@ -56,9 +58,6 @@ class SPEEDplusConfig(Config):
         # head
         self.head = "TokenHead"
         self.head_args = {
-            "SplitHead": {"pool_size": (1, ),},
-            "PoolHead": {"pool_type": "avg",
-                         "pool_size": (1, )},
             "TokenHead": {
                 "patch_shape": None,
                 "embedding_mode": "mean",
@@ -66,112 +65,49 @@ class SPEEDplusConfig(Config):
                 "num_layers": 8,
             }
         }
-        
-        # pos type
-        self.pos_type = "DiscreteSpher"
-        self.pos_args = {
-            "Cart": {},
-            "Spher": {},
-            "DiscreteSpher": {
-                "r_max": 10,
-                "r_stride": 1,
-                "angle_stride": 1,
-                "device": "cuda",
+
+        # keypoints type
+        self.keypoints_type = "heatmap_distribution"
+        self.keypoints_args = {
+            "heatmap_argmax": {
+                "shape_ratio": 1/4,
+                "heatmap_ratio": 1/4,
+                "sigma": 3.0,
+            },
+            "heatmap_distribution": {
+                "heatmap_ratio": 1/2**5,
             }
         }
 
-        # ori type
-        self.ori_type = "DiscreteEuler"
-        self.ori_args = {
-            "Quat": {},
-            "Euler": {},
-            "DiscreteEuler": {
-                "stride": 1,
-                "device": "cuda"
-            },   
+        # uncertainty
+        self.uncertainty_type = "Ratio"
+        self.uncertainty_args = {
+            "Rank": {},
+            "Ratio": {}
         }
-        
+
         # loss
-        ## pos_loss
-        # self.pos_loss_dict = {
-        #     "DiscreteSpher": "CE",
-        # }
-        self.pos_loss_dict = {
-            "DiscreteSpher": "CE",
-            "Spher": "L1",
+        self.keypoints_beta = 1.0
+        self.keypoints_weight_strategy = None
+        self.keypoints_loss_type = "CE"
+        self.keypoints_loss_args = {
+            "L2": {"reduction": "mean"},
+            "CE": {"reduction": "mean"}
         }
-        self.pos_loss_args = {
-            "Cart": {
-                "loss_type": {
-                    "L1": {"reduction": "mean"},
-                    "L2": {"reduction": "mean"},
-                    "SmoothL1": {"reduction": "mean"},
-                },
-                "beta": {"x": 1.0, "y": 1.0, "z": 1.0},
-                "weight_strategy": {"x": None, "y": None, "z": None},
-            },
-            "Spher": {
-                "loss_type": {
-                    "L1": {"reduction": "mean"},
-                    "L2": {"reduction": "mean"},
-                    "SmoothL1": {"reduction": "mean"},
-                },
-                "beta": {"r": 1.0, "theta": 1.0, "phi": 1.0},
-                "weight_strategy": {"r": "CosDecay", "theta": "CosDecay", "phi": "CosDecay"},
-            },
-            "DiscreteSpher": {
-                "loss_type": {
-                    "CE": {"reduction": "mean"},
-                    "KL": {},
-                },
-                "beta": {"discrete_r": 1.0, "discrete_theta": 1.0, "discrete_phi": 1.0},
-                "weight_strategy": {"discrete_r": None, "discrete_theta": None, "discrete_phi": None},
-            },
+
+        self.uncertainty_beta = 1.0
+        self.uncertainty_weight_strategy = None
+        self.uncertainty_loss_type = "L2"
+        self.uncertainty_loss_args = {
+            "L1": {"reduction": "mean"},
+            "L2": {"reduction": "mean"},
+            "Sub": {},
         }
-        
-        ## ori_loss
-        self.ori_loss_dict = {
-            "DiscreteEuler": "CE",
-            "Euler": "L1",
-        }
-        self.ori_loss_args = {
-            "Quat": {
-                "loss_type": {
-                    "Cos": {},
-                    "CosDistance": {},
-                    "ExpCos": {},
-                },
-                "beta": 5.0,
-                "weight_strategy": None,
-            },
-            "Euler": {
-                "loss_type": {
-                    "L1": {"reduction": "mean"},
-                    "L2": {"reduction": "mean"},
-                    "SmoothL1": {"reduction": "mean"},
-                },
-                "beta": {"yaw": 5.0, "pitch": 5.0, "roll": 5.0},
-                "weight_strategy": {"yaw": "CosDecay", "pitch": "CosDecay", "roll": "CosDecay"},
-            },
-            "DiscreteEuler": {
-                "loss_type": {
-                    "CE": {"reduction": "mean"},
-                    "KL": {},
-                },
-                "beta": {"discrete_yaw": 5.0, "discrete_pitch": 5.0, "discrete_roll": 5.0},
-                "weight_strategy": {"discrete_yaw": None, "discrete_pitch": None, "discrete_roll": None},
-            },
-        }
+
         self.ALPHA = (5, 1)              # score
 
         # augmentation
-        self.ZAxisRotation_p = 0.8
-        self.ZAxisRotation_args = {
-            "max_angle": 180,
-            "max_t": 7,
-        }
-
-        self.OpticalCenterRotation_p = 0.0
+        self.OpticalCenterRotation_p = 0.8
         self.OpticalCenterRotation_args = {
             "max_angle": 180,
             "max_t": 7,
@@ -185,21 +121,35 @@ class SPEEDplusConfig(Config):
             "max_t": 7,
         }
 
-        self.ClothSurface_p = 0.0
+        self.ClothSurface_p = 0.5
 
         self.SurfaceBrightness_p = 0.5
 
-        self.SunFlare_p = 0.0
+        self.SunFlare_p = 0.5
 
-        self.CropAndPaste_p = 0.0
+        self.CropAndPaste_p = 0.2
 
-        self.CropAndPadSafe_p = 0.0
+        self.CropAndPadSafe_p = 0.2
 
-        self.DropBlockSafe_p = 0.0
+        self.DropBlockSafe_p = 0.2
         self.DropBlockSafe_args = {
             "drop_num": 7,
         }
 
-        self.AlbumentationAug_p = 0.0
+        self.AlbumentationAug_p = 0.1
 
         self.name = ""
+
+        self.keypoints = np.array([
+            [-0.37,   -0.385,   0.3215],
+            [-0.37,    0.385,   0.3215],
+            [ 0.37,    0.385,   0.3215],
+            [ 0.37,   -0.385,   0.3215],
+            [-0.37,   -0.264,   0.    ],
+            [-0.37,    0.304,   0.    ],
+            [ 0.37,    0.304,   0.    ],
+            [ 0.37,   -0.264,   0.    ],
+            [-0.5427,  0.4877,  0.2535],
+            [ 0.5427,  0.4877,  0.2591],
+            [ 0.305,  -0.579,   0.2515]
+        ])

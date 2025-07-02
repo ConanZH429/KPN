@@ -56,6 +56,7 @@ class BackboneFactory:
             pretrained: bool = True,
             **kwargs
     ) -> BaseBackbone:
+        
         BackboneClass = BackboneFactory.backbone_dict.get(backbone, None)
         if not BackboneClass:
             raise ValueError(f"Unsupported backbone model: {backbone}.")

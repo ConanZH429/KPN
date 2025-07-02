@@ -1,66 +1,72 @@
 from torch.utils.data import DataLoader
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from ..utils import SPEEDCamera
+from ..utils import Camera
+from typing import Tuple
 
-def points2box(points: np.ndarray, image_size: tuple) -> np.ndarray:
+def points2box(points_image: np.ndarray, points_vis:np.ndarray, image_size: tuple) -> np.ndarray:
     """
     Args:
-        points: (N, 3)
+        points_image: (N, 2)
     """
     box = np.array(
         [
-            max(points[:, 0].min(), 0),                 # x_min
-            max(points[:, 1].min(), 0),                 # y_min
-            min(points[:, 0].max(), image_size[1]),     # x_max
-            min(points[:, 1].max(), image_size[0]),     # y_max
+            points_image[points_vis, 0].min(),                 # x_min
+            points_image[points_vis, 1].min(),                 # y_min
+            points_image[points_vis, 0].max(),     # x_max
+            points_image[points_vis, 1].max(),     # y_max
         ],
         dtype=np.int32
     )
-    in_image_num = np.sum(
-        (points[:, 0] > 0) & (points[:, 0] < image_size[1]) &
-        (points[:, 1] > 0) & (points[:, 1] < image_size[0])
-    )
-    return box, in_image_num
+    return box
 
-def cam2image(points_cam: np.ndarray, Camera: SPEEDCamera) -> np.ndarray:
+
+def world2camera(points_world: np.ndarray, pos: np.ndarray, ori: np.ndarray) -> np.ndarray:
     """
     Args:
-        points: (N, 4)
+        points_world: (N, 3)
+        pos: (3,)
+        ori: (4,) quaternion, scalar first
     """
-    intrinsic_mat = np.hstack((Camera.K_image, np.zeros((3, 1))))       # 3x4
-    points_image = intrinsic_mat @ points_cam.T       # 4xN
-    zc = points_cam.T[2]     # N
-    points_image = points_image / zc     # 3xN
-    return points_image.T       # Nx3
-
-def world2image(pos: np.ndarray, ori: np.ndarray, Camera: SPEEDCamera) -> np.ndarray:
-    points = np.array(
-        [[-0.37,   -0.385,   0.3215],
-        [-0.37,    0.385,   0.3215],
-        [ 0.37,    0.385,   0.3215],
-        [ 0.37,   -0.385,   0.3215],
-        [-0.37,   -0.264,   0.    ],
-        [-0.37,    0.304,   0.    ],
-        [ 0.37,    0.304,   0.    ],
-        [ 0.37,   -0.264,   0.    ],
-        [-0.5427,  0.4877,  0.2535],
-        [ 0.5427,  0.4877,  0.2591],
-        [ 0.305,  -0.579,   0.2515],]
-    )       # 11x3
-    
-    points_world = np.hstack((points, np.ones((points.shape[0], 1)))).T # 4x11
-    # world2cam
     rotation = R.from_quat(ori, scalar_first=True)
-    extrinsic_mat = np.hstack((rotation.as_matrix(), pos.reshape(3, 1)))    # 3x4
-    extrinsic_mat = np.vstack((extrinsic_mat, np.array([0, 0, 0, 1])))        # 4x4
-    points_cam = extrinsic_mat @ points_world       # 4x11
-    r_cam = np.linalg.norm(points_cam[:3], axis=0)     # 11
-    r_cam_min_idx = r_cam[:8].argmin()     # 8
-    r_cam_max_idx = r_cam[:8].argmax()     # 8
-    # cam2image
-    points_image = cam2image(points_cam.T, Camera).T       # 3x11
-    return points_cam.T, points_image.T, r_cam_min_idx, r_cam_max_idx       # 11x4, 11x3, 8x3
+    points_camera = rotation.as_matrix() @ points_world.T + pos.reshape(3, 1)  # 3xN
+    points_camera = points_camera.T  # Nx3
+    return points_camera  # Nx3
+
+
+def camera2image(points_cam: np.ndarray, camera: Camera, image_size: Tuple[int]) -> np.ndarray:
+    """
+    Args:
+        points_cam: (N, 3)
+        camera: Camera
+    """
+    intrinsic_mat = np.hstack((camera.K, np.zeros((3, 1))))  # 3x4
+    points_cam = np.hstack((points_cam, np.ones((points_cam.shape[0], 1))))  # Nx4
+    points_image = intrinsic_mat @ points_cam.T  # 3xN
+    zc = points_cam[:, 2]  # N
+    points_image = points_image / zc  # 3xN
+    points_image = points_image[:2].T  # Nx2
+    points_vis = (points_image[:, 0] >= 0) & (points_image[:, 0] < image_size[1]) & (points_image[:, 1] >= 0) & (points_image[:, 1] < image_size[0])
+    return points_image, points_vis  # Nx2, N
+
+
+def world2image(points_world: np.ndarray, pos: np.ndarray, ori: np.ndarray, camera: Camera, image_size: Tuple[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """
+    Args:
+        points_world: (N, 3)
+        pos: (3,)
+        ori: (4,) quaternion, scalar first
+        camera: Camera
+    """
+    # world2camera
+    points_camera = world2camera(points_world, pos, ori)    # Nx3
+    r_camera = np.linalg.norm(points_camera, axis=1)        # N
+    r_camera_min_idx = r_camera[:8].argmin()  # 8
+    r_camera_max_idx = r_camera[:8].argmax()  # 8
+    # camera2image
+    points_image, points_vis = camera2image(points_camera, camera, image_size)  # Nx2
+    return points_camera, points_image, points_vis, r_camera_min_idx, r_camera_max_idx  # Nx3, Nx2
+
 
 class MultiEpochsDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):

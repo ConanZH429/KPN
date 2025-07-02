@@ -1,5 +1,5 @@
-from .Camera import SPEEDCamera, SPEEDplusCamera
-from .loss import PosLossFactory, OriLossFactory
-from .metrics import PosLossMetric, OriLossMetric, LossMetric, PosErrorMetric, OriErrorMetric, ScoreMetric
+from .Camera import Camera, SPEEDCamera, SPEEDplusCamera
+from .loss import get_keypoints_loss, get_uncertainty_loss
+from .metrics import LossMetric, PosErrorMetric, OriErrorMetric, ScoreMetric, KeypointsErrorMetric
 from .bar import CustomRichProgressBar, CustomTQDMProgressBar
 from .argparse import parse2config

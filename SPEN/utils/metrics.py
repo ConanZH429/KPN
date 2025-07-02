@@ -29,160 +29,6 @@ class LossMetric(Metric):
         return self.loss / self.num_samples
 
 
-class PosLossMetric(Metric):
-    """
-    Position loss metric
-    """
-    is_differentiable = True
-
-    def __init__(self, pos_type: str):
-        super().__init__()
-        self.add_state("num_samples", default=torch.tensor(0.0))
-        if pos_type == "Cart":
-            self.add_state("x_loss", default=torch.tensor(0.0))
-            self.add_state("y_loss", default=torch.tensor(0.0))
-            self.add_state("z_loss", default=torch.tensor(0.0))
-            self.update = self.update_cart
-            self.compute = self.compute_cart
-        elif pos_type == "Spher":
-            self.add_state("r_loss", default=torch.tensor(0.0))
-            self.add_state("theta_loss", default=torch.tensor(0.0))
-            self.add_state("phi_loss", default=torch.tensor(0.0))
-            self.update = self.update_spher
-            self.compute = self.compute_spher
-        elif pos_type == "DiscreteSpher":
-            self.add_state("discrete_r_loss", default=torch.tensor(0.0))
-            self.add_state("discrete_theta_loss", default=torch.tensor(0.0))
-            self.add_state("discrete_phi_loss", default=torch.tensor(0.0))
-            self.update = self.update_discrete_spher
-            self.compute = self.compute_discrete_spher
-        else:
-            raise ValueError(f"Unknown pos type: {pos_type}")
-    
-
-    def update(self, pos_loss_dict: dict, num_samples: int):
-        raise NotImplementedError
-    
-
-    def compute(self):
-        raise NotImplementedError
-
-    
-    def update_cart(self, pos_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.x_loss += pos_loss_dict["x_loss"] * num_samples
-        self.y_loss += pos_loss_dict["y_loss"] * num_samples
-        self.z_loss += pos_loss_dict["z_loss"] * num_samples
-
-    def compute_cart(self):
-        return {
-            "x_loss": self.x_loss / self.num_samples,
-            "y_loss": self.y_loss / self.num_samples,
-            "z_loss": self.z_loss / self.num_samples
-        }
-
-    def update_spher(self, pos_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.r_loss += pos_loss_dict["r_loss"] * num_samples
-        self.theta_loss += pos_loss_dict["theta_loss"] * num_samples
-        self.phi_loss += pos_loss_dict["phi_loss"] * num_samples
-
-    def compute_spher(self):
-        return {
-            "r_loss": self.r_loss / self.num_samples,
-            "theta_loss": self.theta_loss / self.num_samples,
-            "phi_loss": self.phi_loss / self.num_samples
-        }
-
-    def update_discrete_spher(self, pos_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.discrete_r_loss += pos_loss_dict["discrete_r_loss"] * num_samples
-        self.discrete_theta_loss += pos_loss_dict["discrete_theta_loss"] * num_samples
-        self.discrete_phi_loss += pos_loss_dict["discrete_phi_loss"] * num_samples
-
-    def compute_discrete_spher(self):
-        return {
-            "discrete_r_loss": self.discrete_r_loss / self.num_samples,
-            "discrete_theta_loss": self.discrete_theta_loss / self.num_samples,
-            "discrete_phi_loss": self.discrete_phi_loss / self.num_samples
-        }
-
-
-class OriLossMetric(Metric):
-    """
-    Orientation loss metric
-    """
-    is_differentiable = True
-
-    def __init__(self, ori_type: str):
-        super().__init__()
-        self.add_state("num_samples", default=torch.tensor(0.0))
-        if ori_type == "Quat":
-            self.add_state("quat_loss", default=torch.tensor(0.0))
-            self.update = self.update_quat
-            self.compute = self.compute_quat
-        elif ori_type == "Euler":
-            self.add_state("yaw_loss", default=torch.tensor(0.0))
-            self.add_state("pitch_loss", default=torch.tensor(0.0))
-            self.add_state("roll_loss", default=torch.tensor(0.0))
-            self.update = self.update_euler
-            self.compute = self.compute_euler
-        elif ori_type == "DiscreteEuler":
-            self.add_state("discrete_yaw_loss", default=torch.tensor(0.0))
-            self.add_state("discrete_pitch_loss", default=torch.tensor(0.0))
-            self.add_state("discrete_roll_loss", default=torch.tensor(0.0))
-            self.update = self.update_discrete_euler
-            self.compute = self.compute_discrete_euler
-        else:
-            raise ValueError(f"Unknown ori type: {ori_type}")
-    
-
-    def update(self, ori_loss_dict: dict, num_samples: int):
-        raise NotImplementedError
-
-
-    def compute(self):
-        raise NotImplementedError
-
-    
-    def update_quat(self, ori_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.quat_loss += ori_loss_dict["quat_loss"] * num_samples
-    
-    def compute_quat(self):
-        return {
-            "quat_loss": self.quat_loss / self.num_samples
-        }
-
-
-    def update_euler(self, ori_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.yaw_loss += ori_loss_dict["yaw_loss"] * num_samples
-        self.pitch_loss += ori_loss_dict["pitch_loss"] * num_samples
-        self.roll_loss += ori_loss_dict["roll_loss"] * num_samples
-    
-    def compute_euler(self):
-        return {
-            "yaw_loss": self.yaw_loss / self.num_samples,
-            "pitch_loss": self.pitch_loss / self.num_samples,
-            "roll_loss": self.roll_loss / self.num_samples
-        }    
-
-
-    def update_discrete_euler(self, ori_loss_dict: dict, num_samples: int):
-        self.num_samples += num_samples
-        self.discrete_yaw_loss += ori_loss_dict["discrete_yaw_loss"] * num_samples
-        self.discrete_pitch_loss += ori_loss_dict["discrete_pitch_loss"] * num_samples
-        self.discrete_roll_loss += ori_loss_dict["discrete_roll_loss"] * num_samples
-
-    def compute_discrete_euler(self):
-        return {
-            "discrete_yaw_loss": self.discrete_yaw_loss / self.num_samples,
-            "discrete_pitch_loss": self.discrete_pitch_loss / self.num_samples,
-            "discrete_roll_loss": self.discrete_roll_loss / self.num_samples
-        }
-
-
 class PosErrorMetric(Metric):
     """
     Position error metric
@@ -208,7 +54,6 @@ class PosErrorMetric(Metric):
     
     def compute(self):
         return self.pos_error / self.num_samples, self.Et / self.num_samples
-
 
 
 class OriErrorMetric(Metric):
@@ -238,6 +83,29 @@ class OriErrorMetric(Metric):
     def compute(self):
         return self.ori_error / self.num_samples
 
+
+class KeypointsErrorMetric(Metric):
+    is_differentiable = True
+
+    def __init__(self):
+        super().__init__()
+        self.add_state("keypoints_error", default=torch.tensor(0.0))
+        self.add_state("num_samples", default=torch.tensor(0.0))
+    
+    def update(self, keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor, num_samples: int):
+        """
+        keypoints_decode_pre: (B, N, 2)
+        keypoints_decode_label: (B, N, 2)
+        """
+        keypoints_error = torch.norm(keypoints_decode_pre - keypoints_decode_label, p=2, dim=-1)  # (B, N)
+        keypoints_error = torch.mean(keypoints_error, dim=-1)    # (B,)
+        self.keypoints_error += torch.sum(keypoints_error)
+        self.num_samples += num_samples
+    
+    def compute(self):
+        if self.num_samples == 0:
+            return torch.tensor(0.0)
+        return self.keypoints_error / self.num_samples
 
 
 class ScoreMetric(Metric):

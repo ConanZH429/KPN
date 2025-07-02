@@ -10,12 +10,8 @@ class Config:
         self.debug: bool = False
 
         # logger
-        self.comet_api: str = ""
-        self.offline: bool = False
 
         # dataset
-        self.dataset_folder: Union[Path, str] = ""
-        self.cache: bool = False
         
         # train
         self.epochs: int
