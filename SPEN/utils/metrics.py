@@ -47,7 +47,7 @@ class PosErrorMetric(Metric):
         Et = LA.vector_norm(pos_pre - pos_label, dim=1)
         Et_norm = Et / LA.vector_norm(pos_label, dim=1)
         self.Et += torch.sum(Et[Et_norm>=0.002173])
-        self.pos_error += torch.sum( Et_norm[Et_norm>=0.002173] )
+        self.pos_error += torch.sum( Et_norm[Et_norm >= 0.002173] )
         self.num_samples += num_samples
         if torch.isnan(self.pos_error):
             print(pos_pre, pos_label)
@@ -74,8 +74,8 @@ class OriErrorMetric(Metric):
         ori_label_norm = F.normalize(ori_label, p=2, dim=1)
         ori_inner_dot = torch.abs(torch.sum(ori_pre_norm * ori_label_norm, dim=1))
         ori_inner_dot = torch.clamp(ori_inner_dot, max=1.0, min=-1.0)
-        ori_error = torch.rad2deg(2 * torch.arccos(ori_inner_dot))
-        self.ori_error += torch.sum(ori_error[ori_error > 0.169])
+        ori_error = 2 * torch.rad2deg(torch.arccos(ori_inner_dot))
+        self.ori_error += torch.sum(ori_error[ori_error >= 0.169])
         self.num_samples += num_samples
         if torch.isnan(self.ori_error):
             print(ori_inner_dot)

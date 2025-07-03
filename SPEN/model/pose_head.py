@@ -38,7 +38,7 @@ class RatioUncertaintyHead(nn.Module):
             out_features=keypoints_num,
         )
     
-    def __init__(self, uncertainty_feature: Tensor):
+    def forward(self, uncertainty_feature: Tensor):
         uncertainty_feature = self.fc(uncertainty_feature)
         uncertainty_feature = F.sigmoid(uncertainty_feature)
         return uncertainty_feature

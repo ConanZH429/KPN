@@ -112,19 +112,10 @@ dataloaders = []
 config = SPEEDplusConfig()
 config.cache = False
 config.resize_first = True
-config.ori_type = "Euler"
-config.ori_loss_dict = {
-    "Euler": "L1"
-}
-config.CropAndPaste_p = 0.0
-config.CropAndPadSafe_p = 0.0
-config.DropBlockSafe_p = 0.0
-config.ClothSurface_p = 0.0
-config.SurfaceBrightness_p = 0.0
+
 config.SunFlare_p = 0.0
-config.OpticalCenterRotation_p = 1.0
-# config.TransRotation_p = 1.0
-config.AlbumentationAug_p = 0.0
+config.SurfaceSunFlare_p = 1.0
+
 dataset = SPEEDplusTrainDataset(config)
 train_dataloader = DataLoader(
     dataset,
@@ -135,7 +126,7 @@ dataloaders.append(train_dataloader)
 
 
 # plot_pose_range(dataloaders, t=100)
-ratio = 900 / 480
+ratio = (config.image_first_size[0] if config.resize_first else 1200) / config.image_size[0]
 for batch in train_dataloader:
     image_tensor, image, label = batch
     image = image.squeeze().numpy()

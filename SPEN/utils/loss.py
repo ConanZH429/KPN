@@ -40,10 +40,10 @@ class Beta:
 class KLLoss(nn.Module):
     def __init__(self, **kwargs):
         super().__init__()
-        self.loss = nn.KLDivLoss(reduction="batchmean")
+        self.loss = nn.KLDivLoss(reduction="none")
     
     def forward(self, pre, label):
-        return self.loss(F.log_softmax(pre, dim=1), label)
+        return self.loss(F.log_softmax(pre, dim=1), label).sum(dim=1)
 
 class ArgmaxHeatmapLoss(nn.Module):
     
@@ -66,11 +66,15 @@ class ArgmaxHeatmapLoss(nn.Module):
             self,
             heatmap_pre: Tensor,        # (B, N, H, W)
             heatmap_label: Tensor,      # (B, N, H, W)
+            points_vis: Tensor,             # (B, N) visibility mask
             **kwargs
     ):
         now_epoch = kwargs.get("now_epoch", None)
         self.beta.step(now_epoch=now_epoch)
-        return self.loss(heatmap_pre, heatmap_label) * self.beta.beta
+        loss_items = self.loss(heatmap_pre, heatmap_label)  # (B, N, H, W)
+        loss_items = loss_items * points_vis.float().unsqueeze(-1).unsqueeze(-1)
+        loss = loss_items.sum(dim=(1, 2, 3)).mean()     # 
+        return loss * self.beta.beta
 
 
 class DistributionHeatmapLoss(nn.Module):
@@ -95,12 +99,18 @@ class DistributionHeatmapLoss(nn.Module):
         self,
         heatmap_pre: Tensor,        # (B, N, H, W)
         heatmap_label: Tensor,      # (B, N, H, W)
+        points_vis: Tensor,         # (B, N) visibility mask
         **kwargs
     ):
         now_epoch = kwargs.get("now_epoch", None)
         self.beta.step(now_epoch=now_epoch)
         B, N, H, W = heatmap_pre.shape
-        return self.loss(heatmap_pre.reshape(B*N, H*W), heatmap_label.reshape(B*N, H*W)) * self.beta.beta
+        pre = heatmap_pre.reshape(B*N, H*W)  # (B*N, H*W)
+        label = heatmap_label.reshape(B*N, H*W)
+        loss_item = self.loss(pre, label).reshape(B, N)   # (B*N,) -> (B, N)
+        loss_item = loss_item * points_vis.float()
+        loss = loss_item.sum(dim=1).mean()  # average over batch
+        return loss * self.beta.beta
 
 
 def get_keypoints_loss(
@@ -156,6 +166,7 @@ class RankLoss(nn.Module):
             self,
             uncertainty_pre: Tensor,        # (B, N)
             uncertainty_label: Tensor,      # (B, N)
+            points_vis: Tensor,             # (B, N) visibility mask
             **kwargs
     ):
         now_epoch = kwargs.get("now_epoch", None)
@@ -184,10 +195,14 @@ class RatioLoss(nn.Module):
             self,
             uncertainty_pre: Tensor,        # (B, N)
             uncertainty_label: Tensor,      # (B, N)
+            points_vis: Tensor,             # (B, N) visibility mask
             **kwargs):
         now_epoch = kwargs.get("now_epoch", None)
         self.beta.step(now_epoch=now_epoch)
-        return self.loss(uncertainty_pre, uncertainty_label) * self.beta.beta
+        loss_items = self.loss(uncertainty_pre, uncertainty_label)
+        loss_items = loss_items * points_vis.float()
+        loss = loss_items.sum(dim=1).mean()  # average over batch
+        return loss * self.beta.beta
 
 
 def get_uncertainty_loss(

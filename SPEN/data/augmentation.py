@@ -13,7 +13,7 @@ from .utils import points2box, world2image, camera2image
 # from albumentations.augmentations.geometric.functional import perspective_bboxes
 
 
-class SurfaceBrightnessAug():
+class SurfaceSunFlareAug():
     def __init__(self, p: float = 0.5,):
         self.p = p
         self.adjacent_faces_dict = {
@@ -74,33 +74,107 @@ class SurfaceBrightnessAug():
         if random.random() > self.p:
             return image
 
-        points_image = points_image.copy().astype(np.int32)
-        output = image.copy().astype(np.uint8)
+        points = points_image.astype(np.int32)
+        output = image.copy().astype(np.int32)
+
+        surface_idx = self.adjacent_faces_dict[r_cam_min_idx][random.randint(0, 2)]
+
+        points = points[surface_idx, :]     # (4, 2)
+        center = points.mean(axis=0)   # (2,)
+        dis = points - center
+        expand_dis = dis * 1.2
+        points = center + expand_dis
+        points[:, 0] = np.clip(points[:, 0], 0, image.shape[1] - 1)
+        points[:, 1] = np.clip(points[:, 1], 0, image.shape[0] - 1)
+        points = points.astype(np.int32)
+
+        flare_layer = np.zeros_like(image, dtype=np.uint8)
+        flare_layer = cv.fillConvexPoly(flare_layer, points, random.randint(200, 250))
+        flare_layer = cv.GaussianBlur(flare_layer, (31, 31), sigmaX=15, sigmaY=15)
+
+        output += flare_layer
+        output = np.clip(output, 0, 255)
+
+        return output.astype(np.uint8)
+
+
+class SurfaceBrightnessAug():
+    def __init__(self, p: float = 0.5,):
+        self.p = p
+        self.adjacent_faces_dict = {
+            0: np.array([
+                [0, 1, 5, 4],
+                [0, 3, 7, 4],
+                [0, 1, 2, 3],
+            ]),
+            1: np.array([
+                [1, 0, 4, 5],
+                [1, 5, 6, 2],
+                [1, 2, 3, 0],
+            ]),
+            2: np.array([
+                [2, 1, 5, 6],
+                [2, 3, 7, 6],
+                [2, 3, 0, 1],
+            ]),
+            3: np.array([
+                [3, 2, 6, 7],
+                [3, 0, 4, 7],
+                [3, 0, 1, 2],
+            ]),
+            4: np.array([
+                [4, 5, 6, 7],
+                [4, 0, 1, 5],
+                [4, 7, 3, 0],
+            ]),
+            5: np.array([
+                [5, 6, 7, 4],
+                [5, 1, 2, 6],
+                [5, 4, 0, 1],
+            ]),
+            6: np.array([
+                [6, 7, 4, 5],
+                [6, 2, 3, 7],
+                [6, 5, 1, 2],
+            ]),
+            7: np.array([
+                [7, 4, 5, 6],
+                [7, 3, 2, 6],
+                [7, 4, 0, 3],
+            ])
+        }
+        self.aug = A.RandomBrightnessContrast(
+            brightness_limit=(-0.5, 0.5),
+            contrast_limit=(-0.01, 0.01),
+            ensure_safe_range=True,
+            p=1.0
+        )
+
+    def __call__(
+            self,
+            image: np.ndarray,
+            points_image: np.ndarray,       # Nx2
+            r_cam_min_idx: int,
+    ):
+        if random.random() > self.p:
+            return image
+
+        points = points_image.astype(np.int32)
+        output = image.copy().astype(np.int32)
 
         for i in range(3):
             surface_idx = self.adjacent_faces_dict[r_cam_min_idx][i]
-            output = self.change_single_surface(
-                image=output,
-                points_image=points_image[:8],
-                surface_idx=surface_idx
-            )
 
-        return output
+            mask = np.zeros_like(image, dtype=np.uint8)
+            mask = cv.fillConvexPoly(mask, points[surface_idx, :], 1)
+            mask = mask.astype(bool)
+            image_aug = image.copy().astype(np.int32)
+            image_aug = image_aug + random.randint(-50, 50)
+            output[mask] = image_aug[mask]
+        
+        output = np.clip(output, 0, 255)
 
-    def change_single_surface(
-            self,
-            image: np.ndarray,
-            points_image: np.ndarray,
-            surface_idx: np.ndarray
-    ):
-        mask = np.zeros_like(image, dtype=np.uint8)
-        mask = cv.fillConvexPoly(mask, points_image[surface_idx, :], 1)
-        mask = mask.astype(bool)
-        output, image_copy = image.copy(), image.copy()
-        image_copy = self.aug(image=image_copy)["image"]
-
-        output[mask] = image_copy[mask]
-        return output
+        return output.astype(np.uint8)
 
 
 class ClothSurfaceAug():
@@ -182,9 +256,10 @@ class ClothSurfaceAug():
         mask = cv.fillConvexPoly(mask, surface_points, 1)
         mask = mask.astype(bool)
 
-        image[mask] = 0.7 * image[mask] + 0.3 * cloth_image[mask]
-        return image
-    
+        output = image.copy()
+        output[mask] = 0.7 * image[mask] + 0.3 * cloth_image[mask]
+        return output.astype(np.uint8)
+
 
 class TransRotation():
     def __init__(
@@ -417,13 +492,18 @@ class AlbumentationAug():
 
         self.aug = A.OneOf([
             A.OneOf([
-                A.MedianBlur(),
-                A.MotionBlur(),
-                A.GaussianBlur(),
-                A.GlassBlur()
+                A.MedianBlur(blur_limit=(3, 5)),
+                A.MotionBlur(blur_limit=(3, 5)),
+                A.GaussianBlur(blur_limit=(3, 7), sigma_limit=(0.1, 2.0)),
+                A.GlassBlur(sigma=0.1, max_delta=1),
             ]),
-            A.ColorJitter(),
-            A.GaussNoise()
+            A.ColorJitter(
+                brightness=(0.9, 1.1),
+                contrast=(0.9, 1.1),
+                saturation=(0.9, 1.1),
+                hue=(-0.1, 0.1)
+            ),
+            A.GaussNoise(std_range=(0.1, 0.2))
         ], p=p)
     
     def __call__(self, image: np.ndarray, box: np.ndarray) -> np.ndarray:

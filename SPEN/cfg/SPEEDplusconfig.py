@@ -10,7 +10,7 @@ class SPEEDplusConfig(Config):
         self.exp_type = "test"
         self.seed = 9999
         self.benchmark = True
-        self.debug = False
+        self.debug = True
         self.comet_api = "agcu7oeqU395peWf6NCNqnTa7"
         self.offline = False
 
@@ -27,14 +27,14 @@ class SPEEDplusConfig(Config):
         # train
         self.device = "cuda"
         self.epochs = 50
-        self.batch_size = 32
+        self.batch_size = 50
         self.lr0 = 0.001
         self.lr_min = 0.000001
         self.warmup_epochs = 5
         self.weight_decay = 0.00001
         self.optimizer = "AdamW"
         self.scheduler = "WarmupCosin"              # WarmupCosin, OnPlateau, ReduceWarmupCosin, MultiStepLR
-        self.num_workers = 10
+        self.num_workers = 30
         self.compile = True
         self.gradient_clip_val = 5.0
 
@@ -91,16 +91,17 @@ class SPEEDplusConfig(Config):
         self.keypoints_weight_strategy = None
         self.keypoints_loss_type = "CE"
         self.keypoints_loss_args = {
-            "L2": {"reduction": "mean"},
-            "CE": {"reduction": "mean"}
+            "L2": {"reduction": "none"},
+            "CE": {"reduction": "none"},
+            "KL": {"reduction": "none"},
         }
 
         self.uncertainty_beta = 1.0
         self.uncertainty_weight_strategy = None
-        self.uncertainty_loss_type = "L2"
+        self.uncertainty_loss_type = "L1"
         self.uncertainty_loss_args = {
-            "L1": {"reduction": "mean"},
-            "L2": {"reduction": "mean"},
+            "L1": {"reduction": "none"},
+            "L2": {"reduction": "none"},
             "Sub": {},
         }
 
@@ -121,22 +122,24 @@ class SPEEDplusConfig(Config):
             "max_t": 7,
         }
 
-        self.ClothSurface_p = 0.5
+        self.ClothSurface_p = 0.3
 
         self.SurfaceBrightness_p = 0.5
 
-        self.SunFlare_p = 0.5
+        self.SurfaceSunFlare_p = 0.5
 
-        self.CropAndPaste_p = 0.2
+        self.SunFlare_p = 0.2
 
-        self.CropAndPadSafe_p = 0.2
+        self.CropAndPaste_p = 0.0
 
-        self.DropBlockSafe_p = 0.2
+        self.CropAndPadSafe_p = 0.0
+
+        self.DropBlockSafe_p = 0.0
         self.DropBlockSafe_args = {
             "drop_num": 7,
         }
 
-        self.AlbumentationAug_p = 0.1
+        self.AlbumentationAug_p = 0.05
 
         self.name = ""
 
@@ -153,3 +156,17 @@ class SPEEDplusConfig(Config):
             [ 0.5427,  0.4877,  0.2591],
             [ 0.305,  -0.579,   0.2515]
         ])
+
+        # self.keypoints = np.array([
+        #     [-0.37,   -0.264,   0.3215],
+        #     [-0.37,    0.304,   0.3215],
+        #     [ 0.37,    0.304,   0.3215],
+        #     [ 0.37,   -0.264,   0.3215],
+        #     [-0.37,   -0.264,   0.    ],
+        #     [-0.37,    0.304,   0.    ],
+        #     [ 0.37,    0.304,   0.    ],
+        #     [ 0.37,   -0.264,   0.    ],
+        #     [-0.5427,  0.4877,  0.2535],
+        #     [ 0.5427,  0.4877,  0.2591],
+        #     [ 0.305,  -0.579,   0.2515]
+        # ])

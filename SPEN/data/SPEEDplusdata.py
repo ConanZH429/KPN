@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from torchvision.transforms import v2, InterpolationMode
 from ..cfg import SPEEDplusConfig
-from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare
+from .augmentation import DropBlockSafe, CropAndPadSafe, CropAndPaste, AlbumentationAug, OpticalCenterRotation, TransRotation, SurfaceBrightnessAug, ClothSurfaceAug, SunFlare, SurfaceSunFlareAug
 from .utils import MultiEpochsDataLoader, world2image, points2box
 from ..keypoints import get_keypoints_encoder
 from ..utils import SPEEDplusCamera
@@ -204,6 +204,7 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
         self.cloth_surface = ClothSurfaceAug(
             p=config.ClothSurface_p,
         )
+        self.surface_flare = SurfaceSunFlareAug(p=config.SurfaceSunFlare_p)
         self.surface_brightness = SurfaceBrightnessAug(p=config.SurfaceBrightness_p)
         self.optical_center_rotation = OpticalCenterRotation(
             image_shape=self.image_first_size if self.resize_first else (1200, 1920),
@@ -222,6 +223,7 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
         image = self.crop_and_pad_safe(image, box)
         image = self.drop_block_safe(image, box)
         image = self.cloth_surface(image, points_image, r_cam_min_idx)
+        image = self.surface_flare(image, points_image, r_cam_min_idx)
         image = self.surface_brightness(image, points_image, r_cam_min_idx)
         image = self.sun_flare(image, box)
         image, pos, ori, box, points_cam, points_image, points_vis = self.optical_center_rotation(image, pos, ori, box, points_cam, points_image, points_vis)

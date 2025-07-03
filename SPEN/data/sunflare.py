@@ -157,28 +157,7 @@ def sun_flare(image: np.ndarray,
               angle_range: tuple[float, float] = (0, 1),
               num_circles: int = 10,):
     height, width = image.shape[:2]
-    # circles = get_circles(
-    #     num_circles=num_circles,
-    #     flare_center_x=flare_center[0],
-    #     flare_center_y=flare_center[1],
-    #     height=height,
-    #     width=width,
-    #     angle_range=angle_range,
-    #     src_color=src_color
-    # )
-    # image = add_sun_flare_overlay(
-    #     img=image,
-    #     flare_center=flare_center,
-    #     src_radius=src_radius,
-    #     src_color=src_color,
-    #     circles=circles
-    # )
-    # image = add_sun_flare_overlayv2(
-    #     img=image,
-    #     flare_center=flare_center,
-    #     src_radius=src_radius,
-    #     src_color=src_color
-    # )
+
     image = add_sun_flare_physics_v2(
         img=image,
         flare_center=flare_center,

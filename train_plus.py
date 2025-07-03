@@ -18,7 +18,7 @@ from pathlib import Path
 
 if __name__ == "__main__":
     config = SPEEDplusConfig()
-    config = parse2config(config)
+    # config = parse2config(config)
     os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
 
     torch.set_float32_matmul_precision("high")
@@ -37,6 +37,7 @@ if __name__ == "__main__":
         config.batch_size = 10
         config.epochs = 10
         config.offline = True
+        config.compile = False
     # ----------Callbacks----------
     checkpoint = Checkpoint(
         dirpath=str(dirpath),

@@ -68,10 +68,10 @@ class ImageModule(Model):
         num_samples = images.size(0)
         uncertainty_pre, keypoints_encode_pre = self.forward(images)     # B, N  B, N, H, W
         # loss
-        keypoints_encode_loss = self.keypoints_loss(keypoints_encode_pre, labels["keypoints_encode"], now_epoch=self.trainer.now_epoch)
+        keypoints_encode_loss = self.keypoints_loss(keypoints_encode_pre, labels["keypoints_encode"], labels["points_vis"], now_epoch=self.trainer.now_epoch)
         keypoints_decode_pre = self.keypoints_decoder.decode(keypoints_encode_pre)  # B, N, 2
         uncertainty_label = self.keypoints_distance_calculator(keypoints_decode_pre, labels["points_image"])
-        uncertainty_loss = self.uncertainty_loss(uncertainty_pre, uncertainty_label, now_epoch=self.trainer.now_epoch)
+        uncertainty_loss = self.uncertainty_loss(uncertainty_pre, uncertainty_label, labels["points_vis"], now_epoch=self.trainer.now_epoch)
         train_loss = keypoints_encode_loss + uncertainty_loss
         # metrics
         self._update_train_metrics(num_samples, keypoints_encode_loss, uncertainty_loss, train_loss)
