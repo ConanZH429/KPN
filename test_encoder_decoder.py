@@ -15,11 +15,12 @@ image_shape = (40, 40)
 shape_ratio = 1 / 4
 sigma = 1.0
 keypoints = np.array([
+    [9.50, 2.00],
     [4.5, 5.7],
     [1.06, 2.33],
     [8.36, 7.08],
     [1.27, 7.21],
-    [8.79, 2.00],
+    [1.8, 2.00],
 ]) * 4
 points_vis = np.array([1, 1, 1, 1, 1], dtype=np.bool)  # All keypoints are visible
 
@@ -28,7 +29,7 @@ print(keypoints)
 
 heatmap_argmax_encoder = HeatmapArgmaxEncoder(
     keypoints_num=key_points_num,
-    image_shape=image_shape,
+    input_image_shape=image_shape,
     shape_ratio=shape_ratio,
     sigma=sigma
 )
@@ -45,12 +46,12 @@ print(keypoints_decode)
 heatmap_distribution_encoder = HeatmapDistributionEncoder(
     keypoints_num=key_points_num,
     input_image_shape=image_shape,
-    heatmap_ratio=shape_ratio
+    ratio=shape_ratio
 )
 
 heatmap_distribution_decoder = HeatmapDistributionDecoder(
     input_image_shape=image_shape,
-    heatmap_ratio=shape_ratio
+    ratio=shape_ratio
 ).to(device=device)
 
 heatmap = heatmap_distribution_encoder.encode(keypoints=keypoints, points_vis=points_vis)  # (5, 10, 10)

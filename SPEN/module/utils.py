@@ -37,8 +37,7 @@ class PoseDecoder:
             device: str = "cpu",
         ):
         self.dist = np.zeros((5, 1), dtype=np.float32)
-        self.image_ratio = 1200 / image_size[0]
-        self.camera = SPEEDplusCamera((1200, 1920))
+        self.camera = SPEEDplusCamera(image_size)
         self.points_world = points_world
         self.device = device
 
@@ -50,7 +49,7 @@ class PoseDecoder:
         t_list = []
         q_list = []
         sorted_idx = torch.argsort(uncertainty_pre, dim=1).cpu().numpy()
-        keypoints_decode = keypoints_decode_pre.cpu().numpy() * self.image_ratio  # Scale to original image size
+        keypoints_decode = keypoints_decode_pre.cpu().numpy()  # Scale to original image size
         for b in range(keypoints_decode.shape[0]):
             points_img = keypoints_decode[b][sorted_idx[b][:5]].astype(np.float32)  # (5, 2)
             points_world = self.points_world[sorted_idx[b][:5]].astype(np.float32)  # (5, 3)

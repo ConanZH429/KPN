@@ -75,7 +75,6 @@ class SPEEDplusConfig(Config):
                 "sigma": 3.0,
             },
             "heatmap_distribution": {
-                "heatmap_ratio": 1/2**5,
             }
         }
 

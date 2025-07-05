@@ -65,7 +65,16 @@ class SPEEDplusDataset(Dataset):
         self.image_first_size = config.image_first_size
         self.keypoints = config.keypoints
         self.camera = SPEEDplusCamera(config.image_first_size) if self.resize_first else SPEEDplusCamera((1200, 1920))
-        self.input_image_size_ratio = self.image_size[0] / (self.image_first_size[0] if self.resize_first else 1200)
+        if self.resize_first:
+            self.points_scale = np.array([
+                (self.image_size[1] - 1) / (self.image_first_size[1] - 1),
+                (self.image_size[0] - 1) / (self.image_first_size[0] - 1),
+            ])
+        else:
+            self.points_scale = np.array([
+                (self.image_size[1] - 1) / (1920 - 1),
+                (self.image_size[0] - 1) / (1200 - 1),
+            ])
         # load the labels
         self.label = {}
         if mode == "train":
@@ -217,6 +226,9 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
     def __getitem__(self, index):
         image = self._get_image(index, self.image_list[index])
         pos, ori, box, points_cam, points_image, points_vis, r_cam_min_idx, r_cam_max_idx = self._get_label(self.image_list[index])
+
+        if np.any(points_image[points_vis, 0] >= self.image_first_size[1]) or np.any(points_image[points_vis, 1] >= self.image_first_size[0]):
+            print(points_image)
         
         # data augmentation
         image = self.crop_and_paste(image, box)
@@ -238,11 +250,11 @@ class SPEEDplusTrainDataset(SPEEDplusDataset):
             "ori": ori.astype(np.float32),
             "box": box.astype(np.int32),
             "points_cam": points_cam.astype(np.float32),
-            "points_image": points_image.astype(np.float32) * self.input_image_size_ratio,
+            "points_image": points_image.astype(np.float32) * self.points_scale,
             "points_vis": points_vis,
         }
         # encode keypoints
-        label["keypoints_encode"] = self.keypoints_encoder.encode(label["points_image"])
+        label["keypoints_encode"] = self.keypoints_encoder.encode(label["points_image"], points_vis)
 
         return image_tensor, image, label
 
@@ -267,7 +279,7 @@ class SPEEDplusValDataset(SPEEDplusDataset):
             "ori": ori.astype(np.float32),
             "box": box.astype(np.int32),
             "points_cam": points_cam.astype(np.float32),
-            "points_image": points_image.astype(np.float32),
+            "points_image": points_image.astype(np.float32) * self.points_scale,
         }
 
         return image_tensor, image, label
@@ -293,7 +305,7 @@ class SPEEDplusTestDataset(SPEEDplusDataset):
             "ori": ori.astype(np.float32),
             "box": box.astype(np.int32),
             "points_cam": points_cam.astype(np.float32),
-            "points_image": points_image.astype(np.float32) * self.input_image_size_ratio,
+            "points_image": points_image.astype(np.float32) * self.points_scale,
         }
         # encode the position
         label["keypoints_encode"] = self.keypoints_encoder.encode(label["points_image"])

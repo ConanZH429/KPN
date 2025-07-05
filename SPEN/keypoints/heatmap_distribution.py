@@ -19,16 +19,19 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
             self,
             keypoints_num: int,
             input_image_shape: Tuple[int, int],
-            heatmap_ratio: float = 1/2**5,
+            ratio: float = 1 / 2**5,
             **kwargs,
     ):
         super().__init__()
         self.keypoints_num = keypoints_num
         self.input_image_shape = input_image_shape
-        self.heatmap_ratio = heatmap_ratio
+        self.points_scale = np.array([
+            (input_image_shape[1] * ratio - 1) / (input_image_shape[1] - 1),
+            (input_image_shape[0] * ratio - 1) / (input_image_shape[0] - 1),
+        ])
         self.heatmap_shape = (
-            int(input_image_shape[0] * heatmap_ratio),
-            int(input_image_shape[1] * heatmap_ratio)
+            int(input_image_shape[0] * ratio),
+            int(input_image_shape[1] * ratio)
         )
     
     def _encode_coord(self, c: float, c_len: int) -> np.ndarray:
@@ -61,7 +64,9 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
             (self.keypoints_num, *self.heatmap_shape),
             dtype=np.float32
         )
-        heatmap_keypoints = keypoints * self.heatmap_ratio  # 关键点在热图中的位置
+        heatmap_keypoints = keypoints * self.points_scale  # 关键点在热图中的位置
+        if np.any(heatmap_keypoints[points_vis, 0] >= self.heatmap_shape[1]) or np.any(heatmap_keypoints[points_vis, 1] >= self.heatmap_shape[0]):
+            print(heatmap_keypoints)
         for keypoint_idx in range(self.keypoints_num):
             keypoints = heatmap_keypoints[keypoint_idx]
             x, y = keypoints
@@ -74,15 +79,18 @@ class HeatmapDistributionDecoder(HeatmapDistribution):
     def __init__(
             self,
             input_image_shape: Tuple[int, int],
-            heatmap_ratio: float = 1/2**5,
+            ratio: float = 1 / 2**5,
             **kwargs,
     ):
         super().__init__()
-        self.heatmap_ratio = heatmap_ratio
+        self.points_scale = (
+            (input_image_shape[1] * ratio - 1) / (input_image_shape[1] - 1),
+            (input_image_shape[0] * ratio - 1) / (input_image_shape[0] - 1),
+        )
         self.input_image_shape = input_image_shape
         self.heatmap_shape = (
-            int(input_image_shape[0] * heatmap_ratio),
-            int(input_image_shape[1] * heatmap_ratio)
+            int(input_image_shape[0] * ratio),
+            int(input_image_shape[1] * ratio)
         )
         x_index = np.arange(self.heatmap_shape[1], dtype=np.float32)
         y_index = np.arange(self.heatmap_shape[0], dtype=np.float32)
@@ -99,11 +107,12 @@ class HeatmapDistributionDecoder(HeatmapDistribution):
         keypoints_encode: (B, N, H, W)
         """
         B, N, H, W = keypoints_encode.shape
-        keypoints_encode_softmax = F.softmax(keypoints_encode.reshape(B, N, -1), -1).reshape(B, N, H, W)
+        # keypoints_encode_softmax = F.softmax(keypoints_encode.reshape(B, N, -1), -1).reshape(B, N, H, W)
+        keypoints_encode_softmax = keypoints_encode
         # decode heatmap to keypoint coordinates
         x = torch.sum(self.x_index.view(1, 1, H, W) * keypoints_encode_softmax, dim=(2, 3))
         y = torch.sum(self.y_index.view(1, 1, H, W) * keypoints_encode_softmax, dim=(2, 3))
         # Scale back to original image shape
-        x = x / self.heatmap_ratio
-        y = y / self.heatmap_ratio
+        x = x / self.points_scale[0]
+        y = y / self.points_scale[1]
         return torch.stack((x, y), dim=-1)  # B, N, 2
