@@ -97,6 +97,7 @@ class ImageModule(Model):
         )
         self._update_val_metrics(num_samples,
                                  keypoints_decode_pre, labels["points_image"],
+                                 labels["points_vis"],
                                  pos_pre, labels["pos"],
                                  ori_pre, labels["ori"])
         self._val_log(log_online=False)
@@ -137,6 +138,7 @@ class ImageModule(Model):
         }
         self._update_test_metrics(num_samples,
                                   keypoints_decode_pre, labels["points_image"],
+                                  labels["points_vis"],
                                   pos_pre, labels["pos"],
                                   ori_pre, labels["ori"])
         self._test_log(log_online=True)
@@ -227,9 +229,10 @@ class ImageModule(Model):
 
     def _update_val_metrics(self, num_samples: int,
                                   keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor,
+                                  points_vis: Tensor,
                                   pos_pre: Tensor, pos_label: Tensor,
                                   ori_pre: Tensor, ori_label: Tensor):
-        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, num_samples)
+        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, points_vis, num_samples)
         self.pos_error_metric.update(pos_pre, pos_label, num_samples)
         self.ori_error_metric.update(ori_pre, ori_label, num_samples)
         self.score_metric.update(self.pos_error_metric.compute()[1], self.ori_error_metric.compute())
@@ -261,9 +264,10 @@ class ImageModule(Model):
 
     def _update_test_metrics(self, num_samples: int,
                                   keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor,
+                                  points_vis: Tensor,
                                   pos_pre: Tensor, pos_label: Tensor,
                                   ori_pre: Tensor, ori_label: Tensor):
-        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, num_samples)
+        self.keypoints_error_metric.update(keypoints_decode_pre, keypoints_decode_label, points_vis, num_samples)
         self.pos_error_metric.update(pos_pre, pos_label, num_samples)
         self.ori_error_metric.update(ori_pre, ori_label, num_samples)
         self.score_metric.update(self.pos_error_metric.compute()[1], self.ori_error_metric.compute())

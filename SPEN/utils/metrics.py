@@ -92,12 +92,19 @@ class KeypointsErrorMetric(Metric):
         self.add_state("keypoints_error", default=torch.tensor(0.0))
         self.add_state("num_samples", default=torch.tensor(0.0))
     
-    def update(self, keypoints_decode_pre: Tensor, keypoints_decode_label: Tensor, num_samples: int):
+    def update(
+            self,
+            keypoints_decode_pre: Tensor,
+            keypoints_decode_label: Tensor,
+            points_vis: Tensor,
+            num_samples: int
+        ):
         """
         keypoints_decode_pre: (B, N, 2)
         keypoints_decode_label: (B, N, 2)
         """
         keypoints_error = torch.norm(keypoints_decode_pre - keypoints_decode_label, p=2, dim=-1)  # (B, N)
+        keypoints_error = keypoints_error * points_vis.float()
         keypoints_error = torch.mean(keypoints_error, dim=-1)    # (B,)
         self.keypoints_error += torch.sum(keypoints_error)
         self.num_samples += num_samples
