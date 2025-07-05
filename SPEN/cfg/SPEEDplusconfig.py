@@ -130,11 +130,11 @@ class SPEEDplusConfig(Config):
 
         self.SunFlare_p = 0.2
 
-        self.CropAndPaste_p = 0.0
+        self.CropAndPaste_p = 0.2
 
-        self.CropAndPadSafe_p = 0.0
+        self.CropAndPadSafe_p = 0.2
 
-        self.DropBlockSafe_p = 0.0
+        self.DropBlockSafe_p = 0.2
         self.DropBlockSafe_args = {
             "drop_num": 7,
         }
