@@ -5,7 +5,7 @@ from torchinfo import summary
 
 class ModelSummary(Callback):
     def __init__(self,
-                 input_size: tuple = (1, 1, 480, 768),
+                 input_size,
                  col_names = ("input_size",
                               "output_size",
                               "num_params",

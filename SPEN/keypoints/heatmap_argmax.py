@@ -15,7 +15,7 @@ class HeatmapArgmaxEncoder(HeatmapArgmax):
     def __init__(
             self,
             keypoints_num: int,
-            input_image_shape: Tuple[int, int] = (480, 768),
+            input_image_shape: Tuple[int, int],
             heatmap_ratio: float = 1/4,
             sigma: float = 3.0,
             **kwargs,

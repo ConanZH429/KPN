@@ -18,7 +18,7 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
     def __init__(
             self,
             keypoints_num: int,
-            input_image_shape: Tuple[int, int] = (480, 768),
+            input_image_shape: Tuple[int, int],
             heatmap_ratio: float = 1/2**5,
             **kwargs,
     ):
@@ -73,7 +73,7 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
 class HeatmapDistributionDecoder(HeatmapDistribution):
     def __init__(
             self,
-            input_image_shape: Tuple[int, int] = (480, 768),
+            input_image_shape: Tuple[int, int],
             heatmap_ratio: float = 1/2**5,
             **kwargs,
     ):
