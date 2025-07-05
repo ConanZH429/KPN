@@ -195,12 +195,10 @@ class RatioLoss(nn.Module):
             self,
             uncertainty_pre: Tensor,        # (B, N)
             uncertainty_label: Tensor,      # (B, N)
-            points_vis: Tensor,             # (B, N) visibility mask
             **kwargs):
         now_epoch = kwargs.get("now_epoch", None)
         self.beta.step(now_epoch=now_epoch)
         loss_items = self.loss(uncertainty_pre, uncertainty_label)
-        loss_items = loss_items * points_vis.float()
         loss = loss_items.sum(dim=1).mean()  # average over batch
         return loss * self.beta.beta
 

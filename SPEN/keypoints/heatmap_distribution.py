@@ -52,6 +52,7 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
     def encode(
             self, 
             keypoints: np.ndarray,
+            points_vis: np.ndarray,
     ):
         """
         keypoints: (N, 2)
@@ -64,7 +65,7 @@ class HeatmapDistributionEncoder(HeatmapDistribution):
         for keypoint_idx in range(self.keypoints_num):
             keypoints = heatmap_keypoints[keypoint_idx]
             x, y = keypoints
-            if 0 <= x <= self.heatmap_shape[1]-1 and 0 <= y <= self.heatmap_shape[0]-1:
+            if points_vis[keypoint_idx]:
                 heatmap[keypoint_idx] = self._encode_keypoint_coord(x, y)
         return heatmap
 
@@ -79,7 +80,6 @@ class HeatmapDistributionDecoder(HeatmapDistribution):
         super().__init__()
         self.heatmap_ratio = heatmap_ratio
         self.input_image_shape = input_image_shape
-        self.heatmap_ratio = heatmap_ratio
         self.heatmap_shape = (
             int(input_image_shape[0] * heatmap_ratio),
             int(input_image_shape[1] * heatmap_ratio)
@@ -99,7 +99,7 @@ class HeatmapDistributionDecoder(HeatmapDistribution):
         keypoints_encode: (B, N, H, W)
         """
         B, N, H, W = keypoints_encode.shape
-        keypoints_encode_softmax = F.softmax(keypoints_encode.clone().detach().reshape(B, N, -1), -1).reshape(B, N, H, W)
+        keypoints_encode_softmax = F.softmax(keypoints_encode.reshape(B, N, -1), -1).reshape(B, N, H, W)
         # decode heatmap to keypoint coordinates
         x = torch.sum(self.x_index.view(1, 1, H, W) * keypoints_encode_softmax, dim=(2, 3))
         y = torch.sum(self.y_index.view(1, 1, H, W) * keypoints_encode_softmax, dim=(2, 3))

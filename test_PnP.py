@@ -41,7 +41,7 @@ for batch in train_dataloader:
     points_world = points_world[:5]
     points_img = points_img[:5]
     dist = np.zeros((5, 1), dtype=np.float32)
-    _, R_exp, t = cv.solvePnP(
+    _, R_exp, t, _ = cv.solvePnPRansac(
         points_world,
         points_img,
         camera.K,
