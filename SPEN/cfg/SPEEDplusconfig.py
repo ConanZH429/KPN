@@ -105,7 +105,7 @@ class SPEEDplusConfig(Config):
             "Sub": {},
         }
 
-        self.ALPHA = (5, 1)              # score
+        self.ALPHA = (3, 1)              # score
 
         # augmentation
         self.OpticalCenterRotation_p = 0.8
