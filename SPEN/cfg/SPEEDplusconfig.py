@@ -98,7 +98,7 @@ class SPEEDplusConfig(Config):
 
         self.uncertainty_beta = 1.0
         self.uncertainty_weight_strategy = None
-        self.uncertainty_loss_type = "L1"
+        self.uncertainty_loss_type = "L2"
         self.uncertainty_loss_args = {
             "L1": {"reduction": "none"},
             "L2": {"reduction": "none"},
